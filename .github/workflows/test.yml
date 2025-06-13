@@ -16,11 +16,6 @@ jobs:
         ports:
           - 9010:9010
           - 9020:9020
-        options: >-
-          --health-cmd="grpc_health_probe -addr=:9010"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
 
     steps:
     - uses: actions/checkout@v4
@@ -46,7 +41,11 @@ jobs:
         CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER: http://localhost:9020/
         SPANNER_EMULATOR_HOST: localhost:9010
         SPANNER_EMULATOR_HOST_REST: localhost:9020
+        CLOUDSDK_CORE_PROJECT: test-project
       run: |
+        # Set default project
+        gcloud config set project test-project
+        
         # Create instance
         gcloud spanner instances create test-instance \
           --config=emulator-config \
