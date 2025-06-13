@@ -16,9 +16,9 @@ var version = "dev"
 // parseOptions parses command line options
 func parseOptions(args []string) (database.Config, *spannerdef.Options) {
 	var opts struct {
-		ProjectID  string   `short:"p" long:"project" description:"Google Cloud Project ID" value-name:"project_id" required:"true"`
-		InstanceID string   `short:"i" long:"instance" description:"Spanner Instance ID" value-name:"instance_id" required:"true"`
-		DatabaseID string   `short:"d" long:"database" description:"Spanner Database ID" value-name:"database_id" required:"true"`
+		ProjectID  string   `short:"p" long:"project" description:"Google Cloud Project ID (or set SPANNER_PROJECT_ID)" value-name:"project_id"`
+		InstanceID string   `short:"i" long:"instance" description:"Spanner Instance ID (or set SPANNER_INSTANCE_ID)" value-name:"instance_id"`
+		DatabaseID string   `short:"d" long:"database" description:"Spanner Database ID (or set SPANNER_DATABASE_ID)" value-name:"database_id"`
 		File       []string `long:"file" description:"Read desired SQL from the file, rather than stdin" value-name:"sql_file" default:"-"`
 		DryRun     bool     `long:"dry-run" description:"Don't run DDLs but just show them"`
 		Export     bool     `long:"export" description:"Just dump the current schema to stdout"`
@@ -43,6 +43,28 @@ func parseOptions(args []string) (database.Config, *spannerdef.Options) {
 	if opts.Version {
 		fmt.Println(version)
 		os.Exit(0)
+	}
+
+	// Use environment variables as defaults if CLI args are not provided
+	if opts.ProjectID == "" {
+		opts.ProjectID = os.Getenv("SPANNER_PROJECT_ID")
+	}
+	if opts.InstanceID == "" {
+		opts.InstanceID = os.Getenv("SPANNER_INSTANCE_ID")
+	}
+	if opts.DatabaseID == "" {
+		opts.DatabaseID = os.Getenv("SPANNER_DATABASE_ID")
+	}
+
+	// Validate required fields
+	if opts.ProjectID == "" {
+		log.Fatal("Project ID is required. Use --project or set SPANNER_PROJECT_ID environment variable.")
+	}
+	if opts.InstanceID == "" {
+		log.Fatal("Instance ID is required. Use --instance or set SPANNER_INSTANCE_ID environment variable.")
+	}
+	if opts.DatabaseID == "" {
+		log.Fatal("Database ID is required. Use --database or set SPANNER_DATABASE_ID environment variable.")
 	}
 
 	desiredFiles := spannerdef.ParseFiles(opts.File)
