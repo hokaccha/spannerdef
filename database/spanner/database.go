@@ -100,3 +100,74 @@ func (db *SpannerDatabase) Close() error {
 	db.client.Close()
 	return db.adminClient.Close()
 }
+
+// SpannerAdminDatabase handles database lifecycle operations
+type SpannerAdminDatabase struct {
+	adminClient    *dbadmin.DatabaseAdminClient
+	projectID      string
+	instanceID     string
+	databaseID     string
+	databasePath   string
+	instancePath   string
+}
+
+func NewAdminDatabase(config database.Config) (*SpannerAdminDatabase, error) {
+	ctx := context.Background()
+
+	// Create admin client for database operations
+	adminClient, err := dbadmin.NewDatabaseAdminClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin client: %v", err)
+	}
+
+	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s",
+		config.ProjectID, config.InstanceID, config.DatabaseID)
+	instancePath := fmt.Sprintf("projects/%s/instances/%s",
+		config.ProjectID, config.InstanceID)
+
+	return &SpannerAdminDatabase{
+		adminClient:  adminClient,
+		projectID:    config.ProjectID,
+		instanceID:   config.InstanceID,
+		databaseID:   config.DatabaseID,
+		databasePath: databasePath,
+		instancePath: instancePath,
+	}, nil
+}
+
+func (db *SpannerAdminDatabase) CreateDatabase(ctx context.Context) error {
+	req := &databasepb.CreateDatabaseRequest{
+		Parent:          db.instancePath,
+		CreateStatement: fmt.Sprintf("CREATE DATABASE `%s`", db.databaseID),
+	}
+
+	op, err := db.adminClient.CreateDatabase(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to create database: %v", err)
+	}
+
+	// Wait for the operation to complete
+	_, err = op.Wait(ctx)
+	if err != nil {
+		return fmt.Errorf("database creation failed: %v", err)
+	}
+
+	return nil
+}
+
+func (db *SpannerAdminDatabase) DropDatabase(ctx context.Context) error {
+	req := &databasepb.DropDatabaseRequest{
+		Database: db.databasePath,
+	}
+
+	err := db.adminClient.DropDatabase(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to drop database: %v", err)
+	}
+
+	return nil
+}
+
+func (db *SpannerAdminDatabase) Close() error {
+	return db.adminClient.Close()
+}

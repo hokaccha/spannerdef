@@ -36,7 +36,8 @@ func RunDDLs(d Database, ddls []string, enableDrop bool) error {
 	validDDLs := make([]string, 0, len(ddls))
 	for _, ddl := range ddls {
 		if !enableDrop && (strings.Contains(ddl, "DROP TABLE") ||
-			strings.Contains(ddl, "DROP INDEX")) {
+			strings.Contains(ddl, "DROP INDEX") ||
+			strings.Contains(ddl, "DROP COLUMN")) {
 			fmt.Printf("-- Skipped: %s\n", ddl)
 			continue
 		}
