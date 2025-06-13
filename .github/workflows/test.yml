@@ -1,0 +1,77 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, add-github-actions ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      spanner-emulator:
+        image: gcr.io/cloud-spanner-emulator/emulator:latest
+        ports:
+          - 9010:9010
+          - 9020:9020
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Install gcloud CLI (for Spanner client)
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        version: 'latest'
+
+    - name: Wait for Spanner emulator to be ready
+      run: |
+        timeout 60 bash -c 'until nc -z localhost 9010; do sleep 1; done'
+        timeout 60 bash -c 'until nc -z localhost 9020; do sleep 1; done'
+        echo "Spanner emulator is ready"
+
+    - name: Create Spanner instance and database
+      env:
+        CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER: http://localhost:9020/
+        SPANNER_EMULATOR_HOST: localhost:9010
+        SPANNER_EMULATOR_HOST_REST: localhost:9020
+        CLOUDSDK_CORE_PROJECT: test-project
+        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: true
+      run: |
+        # Set default project for emulator
+        gcloud config set project test-project
+        gcloud config set auth/disable_credentials true
+        gcloud config set api_endpoint_overrides/spanner http://localhost:9020/
+        
+        # Create instance
+        gcloud spanner instances create test-instance \
+          --config=emulator-config \
+          --description="Test instance" \
+          --nodes=1
+        
+        # Create database
+        gcloud spanner databases create test-database \
+          --instance=test-instance
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run unit tests
+      run: go test -v ./...
+
+    - name: Run integration tests
+      env:
+        CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER: http://localhost:9020/
+        SPANNER_EMULATOR_HOST: localhost:9010
+        SPANNER_EMULATOR_HOST_REST: localhost:9020
+        SPANNER_PROJECT_ID: test-project
+        SPANNER_INSTANCE_ID: test-instance
+        SPANNER_DATABASE_ID: test-database
+        RUN_INTEGRATION_TESTS: 1
+      run: go test -v ./integration_test.go
