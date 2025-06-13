@@ -29,8 +29,10 @@ type Database interface {
 	Close() error
 }
 
-func RunDDLs(d Database, ddls []string, enableDrop bool) error {
-	fmt.Println("-- Apply --")
+func RunDDLs(d Database, ddls []string, enableDrop bool, quiet bool) error {
+	if !quiet {
+		fmt.Println("-- Apply --")
+	}
 
 	// Filter out destructive DDLs if enableDrop is false
 	validDDLs := make([]string, 0, len(ddls))
@@ -38,10 +40,14 @@ func RunDDLs(d Database, ddls []string, enableDrop bool) error {
 		if !enableDrop && (strings.Contains(ddl, "DROP TABLE") ||
 			strings.Contains(ddl, "DROP INDEX") ||
 			strings.Contains(ddl, "DROP COLUMN")) {
-			fmt.Printf("-- Skipped: %s\n", ddl)
+			if !quiet {
+				fmt.Printf("-- Skipped: %s;\n", ddl)
+			}
 			continue
 		}
-		fmt.Printf("%s\n", ddl)
+		if !quiet {
+			fmt.Printf("%s;\n", ddl)
+		}
 		validDDLs = append(validDDLs, ddl)
 	}
 

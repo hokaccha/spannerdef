@@ -88,9 +88,9 @@ func applySchema(t *testing.T, db database.Database, schema string, enableDrop b
 	ddls, err := spannerdef.GenerateIdempotentDDLs(schema, currentDDLs, database.GeneratorConfig{})
 	require.NoError(t, err)
 
-	// Apply the DDLs if any
+	// Apply the DDLs
 	if len(ddls) > 0 {
-		err = database.RunDDLs(db, ddls, enableDrop)
+		err = database.RunDDLs(db, ddls, enableDrop, true)
 		require.NoError(t, err)
 	}
 
@@ -333,7 +333,6 @@ func TestIntegration_SpannerSpecificFeatures(t *testing.T) {
 
 		// Note: Spanner emulator may not preserve OPTIONS in DDL dump
 		// This is an emulator limitation, not a spannerdef issue
-		t.Log("Note: Spanner emulator may not preserve commit timestamp options in schema dump")
 	})
 
 	t.Run("IndexWithStoring", func(t *testing.T) {
@@ -384,7 +383,6 @@ func TestIntegration_SpannerSpecificFeatures(t *testing.T) {
 
 		// Note: Spanner emulator may not preserve INTERLEAVE clauses in DDL dump
 		// This is an emulator limitation, not a spannerdef issue
-		t.Log("Note: Spanner emulator may not preserve interleave clauses in schema dump")
 	})
 }
 
@@ -442,17 +440,17 @@ func TestIntegration_EdgeCases(t *testing.T) {
 		// Generate DDLs but check that DROP statements are skipped during execution
 		currentDDLs, err := db.DumpDDLs()
 		require.NoError(t, err)
-		
+
 		ddls, err := spannerdef.GenerateIdempotentDDLs(updatedSchema, currentDDLs, database.GeneratorConfig{})
 		require.NoError(t, err)
-		
+
 		// DDLs should be generated but DROP COLUMN should be skipped when executed
 		assertDDLContains(t, ddls, "DROP COLUMN")
-		
+
 		// Apply with enableDrop=false - this should skip the DROP COLUMN
-		err = database.RunDDLs(db, ddls, false)
+		err = database.RunDDLs(db, ddls, false, true)
 		require.NoError(t, err)
-		
+
 		// Verify the column is still there (wasn't dropped)
 		afterDDLs, err := db.DumpDDLs()
 		require.NoError(t, err)
@@ -529,7 +527,7 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 		`
 
 		ddls := applySchema(t, db, schema, false)
-		
+
 		// Verify all tables and indexes are created
 		assert.GreaterOrEqual(t, len(ddls), 8, "Should have DDLs for 3 tables and 5 indexes")
 

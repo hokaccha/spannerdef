@@ -51,7 +51,7 @@ func Run(db database.Database, options *Options) {
 		return
 	}
 
-	err = database.RunDDLs(db, ddls, options.EnableDrop)
+	err = database.RunDDLs(db, ddls, options.EnableDrop, false)
 	if err != nil {
 		log.Fatal(err)
 	}
