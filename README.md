@@ -118,10 +118,10 @@ export SPANNER_PROJECT_ID=my-test-project
 export SPANNER_INSTANCE_ID=my-test-instance
 export SPANNER_DATABASE_ID=my-test-database
 
-go test -v ./integration -run TestIntegration
+go test -v ./integration_test
 
 # Run tests (modifies database)
-RUN_INTEGRATION_TESTS=1 go test -v ./integration -run TestIntegration_SchemaChange
+RUN_INTEGRATION_TESTS=1 go test -v ./integration_test
 ```
 
 ## Limitations

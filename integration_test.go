@@ -1,4 +1,4 @@
-package integration_test
+package spannerdef_test
 
 import (
 	"os"
@@ -13,6 +13,11 @@ import (
 
 // getTestConfig returns the test database configuration from environment variables
 func getTestConfig(t *testing.T) database.Config {
+	// Skip by default to avoid accidental schema changes
+	if os.Getenv("RUN_INTEGRATION_TESTS") == "" {
+		t.Skip("Set RUN_INTEGRATION_TESTS=1 to run tests that modify the database")
+	}
+
 	projectID := os.Getenv("SPANNER_PROJECT_ID")
 	if projectID == "" {
 		t.Fatalf("SPANNER_PROJECT_ID is not set")
@@ -83,11 +88,6 @@ func TestIntegration_RealSpanner(t *testing.T) {
 // TestIntegration_SchemaChange tests actual schema changes
 // CAUTION: This test makes actual changes to the database
 func TestIntegration_SchemaChange(t *testing.T) {
-	// Skip by default to avoid accidental schema changes
-	if os.Getenv("RUN_INTEGRATION_TESTS") == "" {
-		t.Skip("Set RUN_INTEGRATION_TESTS=1 to run tests that modify the database")
-	}
-
 	config := getTestConfig(t)
 
 	db, err := spanner.NewDatabase(config)
