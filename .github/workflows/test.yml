@@ -42,9 +42,12 @@ jobs:
         SPANNER_EMULATOR_HOST: localhost:9010
         SPANNER_EMULATOR_HOST_REST: localhost:9020
         CLOUDSDK_CORE_PROJECT: test-project
+        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: true
       run: |
-        # Set default project
+        # Set default project for emulator
         gcloud config set project test-project
+        gcloud config set auth/disable_credentials true
+        gcloud config set api_endpoint_overrides/spanner http://localhost:9020/
         
         # Create instance
         gcloud spanner instances create test-instance \
