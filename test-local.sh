@@ -130,10 +130,6 @@ run_tests() {
     export CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER=http://localhost:9020/
     export SPANNER_EMULATOR_HOST=localhost:9010
     export SPANNER_EMULATOR_HOST_REST=localhost:9020
-    export SPANNER_PROJECT_ID=test-project
-    export SPANNER_INSTANCE_ID=test-instance
-    export SPANNER_DATABASE_ID=test-database
-    export RUN_INTEGRATION_TESTS=1
     
     echo ""
     log_info "Running unit tests..."

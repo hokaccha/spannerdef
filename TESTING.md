@@ -4,9 +4,17 @@
 
 ### 必要な環境
 
-- Docker / Docker Compose
+- Docker / Docker Compose  
 - gcloud CLI (for Spanner emulator setup)
 - Go 1.21+
+
+### 安全性について
+
+Integration testsは**Spanner emulatorでのみ実行**されます：
+
+- 実際のSpannerインスタンスに接続することはありません
+- `SPANNER_EMULATOR_HOST`が設定されていない場合、テストはスキップされます
+- デフォルト値（test-project等）が使用されるため、設定ミスのリスクがありません
 
 ### 簡単な実行方法
 
@@ -87,7 +95,32 @@ docker-compose down
   - Export functionality
   - Configuration filtering
 
+## 設定のカスタマイズ
+
+デフォルト値を変更したい場合は環境変数で上書きできます：
+
+```bash
+# デフォルト値の確認
+export SPANNER_EMULATOR_HOST=localhost:9010  # 必須（emulator接続用）
+# SPANNER_PROJECT_ID=test-project             # デフォルト値
+# SPANNER_INSTANCE_ID=test-instance           # デフォルト値  
+# SPANNER_DATABASE_ID=test-database           # デフォルト値
+
+# カスタム値での実行例
+SPANNER_PROJECT_ID=my-test ./test-local.sh
+```
+
 ## トラブルシューティング
+
+### Integration testsがスキップされる
+
+```bash
+# SPANNER_EMULATOR_HOSTが設定されているか確認
+echo $SPANNER_EMULATOR_HOST
+
+# 手動で設定して実行
+SPANNER_EMULATOR_HOST=localhost:9010 go test -v ./integration_test.go
+```
 
 ### Emulatorが起動しない
 

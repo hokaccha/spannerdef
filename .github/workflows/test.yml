@@ -69,8 +69,4 @@ jobs:
         CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER: http://localhost:9020/
         SPANNER_EMULATOR_HOST: localhost:9010
         SPANNER_EMULATOR_HOST_REST: localhost:9020
-        SPANNER_PROJECT_ID: test-project
-        SPANNER_INSTANCE_ID: test-instance
-        SPANNER_DATABASE_ID: test-database
-        RUN_INTEGRATION_TESTS: 1
       run: go test -v ./integration_test.go

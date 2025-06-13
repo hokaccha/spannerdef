@@ -22,33 +22,34 @@ type TestCase struct {
 	Expected string // Expected DDL output (empty means no changes expected)
 }
 
-// getTestConfig returns the test database configuration from environment variables
+// getTestConfig returns the test database configuration for Spanner emulator
 func getTestConfig(t *testing.T) database.Config {
-	// Skip by default to avoid accidental schema changes
-	if os.Getenv("RUN_INTEGRATION_TESTS") == "" {
-		t.Skip("Set RUN_INTEGRATION_TESTS=1 to run tests that modify the database")
+	// Check if running against Spanner emulator
+	emulatorHost := os.Getenv("SPANNER_EMULATOR_HOST")
+	if emulatorHost == "" {
+		t.Skip("Integration tests require Spanner emulator. Set SPANNER_EMULATOR_HOST to run against emulator.")
 	}
 
-	projectID := os.Getenv("SPANNER_PROJECT_ID")
-	if projectID == "" {
-		t.Fatalf("SPANNER_PROJECT_ID is not set")
-	}
+	// Default values for emulator (can be overridden by environment variables)
+	projectID := getEnvOrDefault("SPANNER_PROJECT_ID", "test-project")
+	instanceID := getEnvOrDefault("SPANNER_INSTANCE_ID", "test-instance")
+	databaseID := getEnvOrDefault("SPANNER_DATABASE_ID", "test-database")
 
-	instanceID := os.Getenv("SPANNER_INSTANCE_ID")
-	if instanceID == "" {
-		t.Fatalf("SPANNER_INSTANCE_ID is not set")
-	}
-
-	databaseID := os.Getenv("SPANNER_DATABASE_ID")
-	if databaseID == "" {
-		t.Fatalf("SPANNER_DATABASE_ID is not set")
-	}
+	t.Logf("Running integration tests against Spanner emulator (host: %s, project: %s)", emulatorHost, projectID)
 
 	return database.Config{
 		ProjectID:  projectID,
 		InstanceID: instanceID,
 		DatabaseID: databaseID,
 	}
+}
+
+// getEnvOrDefault returns the environment variable value or a default value
+func getEnvOrDefault(envVar, defaultValue string) string {
+	if value := os.Getenv(envVar); value != "" {
+		return value
+	}
+	return defaultValue
 }
 
 // recreateDatabase drops and recreates the test database for a clean state
