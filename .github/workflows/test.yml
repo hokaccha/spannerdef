@@ -2,14 +2,13 @@ name: Tests
 
 on:
   push:
-    branches: [ main, add-github-actions ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - "**"
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     services:
       spanner-emulator:
         image: gcr.io/cloud-spanner-emulator/emulator:latest
@@ -48,13 +47,13 @@ jobs:
         gcloud config set project test-project
         gcloud config set auth/disable_credentials true
         gcloud config set api_endpoint_overrides/spanner http://localhost:9020/
-        
+
         # Create instance
         gcloud spanner instances create test-instance \
           --config=emulator-config \
           --description="Test instance" \
           --nodes=1
-        
+
         # Create database
         gcloud spanner databases create test-database \
           --instance=test-instance
