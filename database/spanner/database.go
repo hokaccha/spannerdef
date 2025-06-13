@@ -25,9 +25,9 @@ func NewDatabase(config database.Config) (*SpannerDatabase, error) {
 	ctx := context.Background()
 
 	// Create Spanner client
-	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s", 
+	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s",
 		config.ProjectID, config.InstanceID, config.DatabaseID)
-	
+
 	client, err := spanner.NewClient(ctx, databasePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Spanner client: %v", err)
@@ -72,16 +72,20 @@ func (db *SpannerDatabase) DumpDDLs() (string, error) {
 }
 
 func (db *SpannerDatabase) ExecDDL(ddl string) error {
+	return db.ExecDDLs([]string{ddl})
+}
+
+func (db *SpannerDatabase) ExecDDLs(ddls []string) error {
 	ctx := context.Background()
 
 	req := &databasepb.UpdateDatabaseDdlRequest{
 		Database:   db.databasePath,
-		Statements: []string{ddl},
+		Statements: ddls,
 	}
 
 	op, err := db.adminClient.UpdateDatabaseDdl(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to execute DDL: %v", err)
+		return fmt.Errorf("failed to execute DDLs: %v", err)
 	}
 
 	// Wait for the operation to complete

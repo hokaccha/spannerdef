@@ -25,21 +25,21 @@ func TestParseDDLs_CreateTable(t *testing.T) {
 
 	schema, err := ParseDDLs(ddl)
 	require.NoError(t, err)
-	
+
 	require.Len(t, schema.Tables, 1)
-	
+
 	table, exists := schema.Tables["users"]
 	require.True(t, exists)
 	assert.Equal(t, "users", table.Name)
 	assert.Len(t, table.Columns, 3)
 	assert.Equal(t, []string{"id"}, table.PrimaryKey)
-	
+
 	// Check columns
 	idCol := table.Columns["id"]
 	assert.Equal(t, "id", idCol.Name)
 	assert.Equal(t, "INT64", idCol.Type)
 	assert.True(t, idCol.NotNull)
-	
+
 	nameCol := table.Columns["name"]
 	assert.Equal(t, "name", nameCol.Name)
 	assert.Equal(t, "STRING(100)", nameCol.Type)
@@ -60,10 +60,10 @@ func TestParseDDLs_CreateIndex(t *testing.T) {
 
 	schema, err := ParseDDLs(ddl)
 	require.NoError(t, err)
-	
+
 	require.Len(t, schema.Tables, 1)
 	require.Len(t, schema.Indexes, 2)
-	
+
 	// Check first index
 	idx1, exists := schema.Indexes["idx_name"]
 	require.True(t, exists)
@@ -72,7 +72,7 @@ func TestParseDDLs_CreateIndex(t *testing.T) {
 	assert.False(t, idx1.Unique)
 	assert.Equal(t, []string{"name"}, idx1.Columns)
 	assert.Empty(t, idx1.Storing)
-	
+
 	// Check second index
 	idx2, exists := schema.Indexes["idx_email"]
 	require.True(t, exists)
@@ -88,7 +88,7 @@ func TestGenerateDDLs_CreateTable(t *testing.T) {
 		Tables:  make(map[string]*Table),
 		Indexes: make(map[string]*Index),
 	}
-	
+
 	desired := &Schema{
 		Tables: map[string]*Table{
 			"users": {
@@ -110,10 +110,10 @@ func TestGenerateDDLs_CreateTable(t *testing.T) {
 		},
 		Indexes: make(map[string]*Index),
 	}
-	
+
 	ddls := GenerateDDLs(current, desired)
 	require.Len(t, ddls, 1)
-	
+
 	// Check that the DDL creates the table
 	assert.Contains(t, ddls[0], "CREATE TABLE users")
 	assert.Contains(t, ddls[0], "id INT64 NOT NULL")
@@ -138,12 +138,12 @@ func TestGenerateDDLs_DropTable(t *testing.T) {
 		},
 		Indexes: make(map[string]*Index),
 	}
-	
+
 	desired := &Schema{
 		Tables:  make(map[string]*Table),
 		Indexes: make(map[string]*Index),
 	}
-	
+
 	ddls := GenerateDDLs(current, desired)
 	require.Len(t, ddls, 1)
 	assert.Equal(t, "DROP TABLE old_table", ddls[0])
@@ -166,7 +166,7 @@ func TestGenerateDDLs_AddColumn(t *testing.T) {
 		},
 		Indexes: make(map[string]*Index),
 	}
-	
+
 	desired := &Schema{
 		Tables: map[string]*Table{
 			"users": {
@@ -188,7 +188,7 @@ func TestGenerateDDLs_AddColumn(t *testing.T) {
 		},
 		Indexes: make(map[string]*Index),
 	}
-	
+
 	ddls := GenerateDDLs(current, desired)
 	require.Len(t, ddls, 1)
 	assert.Equal(t, "ALTER TABLE users ADD COLUMN name STRING(100)", ddls[0])
@@ -216,7 +216,7 @@ func TestGenerateDDLs_CreateIndex(t *testing.T) {
 		},
 		Indexes: make(map[string]*Index),
 	}
-	
+
 	desired := &Schema{
 		Tables: map[string]*Table{
 			"users": {
@@ -245,7 +245,7 @@ func TestGenerateDDLs_CreateIndex(t *testing.T) {
 			},
 		},
 	}
-	
+
 	ddls := GenerateDDLs(current, desired)
 	require.Len(t, ddls, 1)
 	assert.Equal(t, "CREATE INDEX idx_name ON users (name)", ddls[0])

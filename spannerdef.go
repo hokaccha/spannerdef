@@ -40,7 +40,7 @@ func Run(db database.Database, options *Options) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	
+
 	if len(ddls) == 0 {
 		fmt.Println("-- Nothing is modified --")
 		return

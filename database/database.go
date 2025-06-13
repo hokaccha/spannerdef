@@ -25,24 +25,31 @@ type GeneratorConfig struct {
 type Database interface {
 	DumpDDLs() (string, error)
 	ExecDDL(ddl string) error
+	ExecDDLs(ddls []string) error
 	Close() error
 }
 
 func RunDDLs(d Database, ddls []string, enableDrop bool) error {
 	fmt.Println("-- Apply --")
+
+	// Filter out destructive DDLs if enableDrop is false
+	validDDLs := make([]string, 0, len(ddls))
 	for _, ddl := range ddls {
-		// Skip destructive DDLs unless enableDrop is set
 		if !enableDrop && (strings.Contains(ddl, "DROP TABLE") ||
 			strings.Contains(ddl, "DROP INDEX")) {
 			fmt.Printf("-- Skipped: %s\n", ddl)
 			continue
 		}
 		fmt.Printf("%s\n", ddl)
-		if err := d.ExecDDL(ddl); err != nil {
-			return err
-		}
+		validDDLs = append(validDDLs, ddl)
 	}
-	return nil
+
+	if len(validDDLs) == 0 {
+		return nil
+	}
+
+	// Execute all DDLs in batch
+	return d.ExecDDLs(validDDLs)
 }
 
 func ParseGeneratorConfig(configFile string) GeneratorConfig {
