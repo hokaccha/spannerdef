@@ -9,7 +9,10 @@ import (
 	"github.com/ubie-sandbox/spannerdef"
 )
 
-var version = "dev"
+var (
+	version   = "dev"
+	buildDate = "unknown"
+)
 
 // parseOptions parses command line options
 func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
@@ -39,7 +42,7 @@ func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 	}
 
 	if opts.Version {
-		fmt.Println(version)
+		fmt.Printf("spannerdef %s (built: %s)\n", version, buildDate)
 		os.Exit(0)
 	}
 
