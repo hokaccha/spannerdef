@@ -1,4 +1,4 @@
-module github.com/ubie-sandbox/spannerdef
+module github.com/hokaccha/spannerdef
 
 go 1.24.3
 

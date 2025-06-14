@@ -18,7 +18,7 @@ Idempotent Google Cloud Spanner schema management by SQL, inspired by [sqldef](h
 ## Installation
 
 ```bash
-go install github.com/ubie-sandbox/spannerdef/cmd/spannerdef@latest
+go install github.com/hokaccha/spannerdef/cmd/spannerdef@latest
 ```
 
 ## Usage

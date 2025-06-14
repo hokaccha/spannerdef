@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/jessevdk/go-flags"
-	"github.com/ubie-sandbox/spannerdef"
+	"github.com/hokaccha/spannerdef"
 )
 
 var (

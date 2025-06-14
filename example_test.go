@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ubie-sandbox/spannerdef"
+	"github.com/hokaccha/spannerdef"
 )
 
 func ExampleGenerateIdempotentDDLs() {
