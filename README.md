@@ -108,23 +108,20 @@ go build ./cmd/spannerdef
 
 ### Testing
 
-spannerdef includes comprehensive tests (21 test cases) that use Spanner emulator for safe testing.
+spannerdef includes comprehensive tests that use Spanner emulator.
+
+**Requirements**: Docker/Docker Compose for Spanner emulator.
 
 ```bash
 # Start Spanner emulator
-docker-compose up -d
+docker-compose up
 
 # Run all tests
 make test
 
-# Run tests with verbose output
-make test-emulator
-
 # Run specific tests
 go test -v . -run TestBasicOperations
 ```
-
-**Requirements**: Docker/Docker Compose for Spanner emulator. Tests automatically skip if emulator is not running. No gcloud CLI required.
 
 ## Limitations
 

@@ -34,7 +34,7 @@ func getTestConfig(t *testing.T) database.Config {
 
 	// Verify emulator is actually running by checking if host is reachable
 	if !isEmulatorRunning(emulatorHost) {
-		t.Skipf("Integration tests require Spanner emulator. Please start it with: docker-compose up -d")
+		t.Fatalf("Integration tests require Spanner emulator. Please start it with: docker-compose up -d")
 	}
 
 	// Set up environment variables for emulator

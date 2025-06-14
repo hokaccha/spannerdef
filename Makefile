@@ -4,7 +4,7 @@ build:
 	go build -o bin/spannerdef ./cmd/spannerdef
 
 test:
-	go test ./...
+	go test -v ./...
 
 clean:
 	rm -rf bin/

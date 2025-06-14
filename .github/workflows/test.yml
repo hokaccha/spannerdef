@@ -63,10 +63,3 @@ jobs:
 
     - name: Run unit tests
       run: go test -v ./...
-
-    - name: Run integration tests
-      env:
-        CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER: http://localhost:9020/
-        SPANNER_EMULATOR_HOST: localhost:9010
-        SPANNER_EMULATOR_HOST_REST: localhost:9020
-      run: go test -v ./integration_test.go
