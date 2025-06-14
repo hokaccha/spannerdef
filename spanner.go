@@ -1,4 +1,4 @@
-package spanner
+package spannerdef
 
 import (
 	"context"
@@ -9,8 +9,6 @@ import (
 	"cloud.google.com/go/spanner"
 	dbadmin "cloud.google.com/go/spanner/admin/database/apiv1"
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
-	instanceadmin "cloud.google.com/go/spanner/admin/instance/apiv1"
-	"github.com/ubie-sandbox/spannerdef/database"
 )
 
 type SpannerDatabase struct {
@@ -22,7 +20,7 @@ type SpannerDatabase struct {
 	databasePath string
 }
 
-func NewDatabase(config database.Config) (*SpannerDatabase, error) {
+func NewDatabase(config Config) (*SpannerDatabase, error) {
 	ctx := context.Background()
 
 	// Create Spanner client
@@ -104,16 +102,15 @@ func (db *SpannerDatabase) Close() error {
 
 // SpannerAdminDatabase handles database lifecycle operations
 type SpannerAdminDatabase struct {
-	adminClient         *dbadmin.DatabaseAdminClient
-	instanceAdminClient *instanceadmin.InstanceAdminClient
-	projectID           string
-	instanceID          string
-	databaseID          string
-	databasePath        string
-	instancePath        string
+	adminClient  *dbadmin.DatabaseAdminClient
+	projectID    string
+	instanceID   string
+	databaseID   string
+	databasePath string
+	instancePath string
 }
 
-func NewAdminDatabase(config database.Config) (*SpannerAdminDatabase, error) {
+func NewAdminDatabase(config Config) (*SpannerAdminDatabase, error) {
 	ctx := context.Background()
 
 	// Create admin client for database operations
@@ -122,26 +119,18 @@ func NewAdminDatabase(config database.Config) (*SpannerAdminDatabase, error) {
 		return nil, fmt.Errorf("failed to create database admin client: %v", err)
 	}
 
-	// Create instance admin client for instance operations
-	instanceAdminClient, err := instanceadmin.NewInstanceAdminClient(ctx)
-	if err != nil {
-		adminClient.Close()
-		return nil, fmt.Errorf("failed to create instance admin client: %v", err)
-	}
-
 	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s",
 		config.ProjectID, config.InstanceID, config.DatabaseID)
 	instancePath := fmt.Sprintf("projects/%s/instances/%s",
 		config.ProjectID, config.InstanceID)
 
 	return &SpannerAdminDatabase{
-		adminClient:         adminClient,
-		instanceAdminClient: instanceAdminClient,
-		projectID:           config.ProjectID,
-		instanceID:          config.InstanceID,
-		databaseID:          config.DatabaseID,
-		databasePath:        databasePath,
-		instancePath:        instancePath,
+		adminClient:  adminClient,
+		projectID:    config.ProjectID,
+		instanceID:   config.InstanceID,
+		databaseID:   config.DatabaseID,
+		databasePath: databasePath,
+		instancePath: instancePath,
 	}, nil
 }
 
@@ -179,18 +168,10 @@ func (db *SpannerAdminDatabase) DropDatabase(ctx context.Context) error {
 }
 
 func (db *SpannerAdminDatabase) Close() error {
-	if err := db.adminClient.Close(); err != nil {
-		return err
-	}
-	return db.instanceAdminClient.Close()
+	return db.adminClient.Close()
 }
 
-// InstanceAdminClient provides access to the instance admin client
-func (db *SpannerAdminDatabase) InstanceAdminClient() *instanceadmin.InstanceAdminClient {
-	return db.instanceAdminClient
-}
-
-// DatabaseAdminClient provides access to the database admin client
+// DatabaseAdminClient returns the database admin client for testing
 func (db *SpannerAdminDatabase) DatabaseAdminClient() *dbadmin.DatabaseAdminClient {
 	return db.adminClient
 }

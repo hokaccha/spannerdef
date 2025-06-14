@@ -7,14 +7,15 @@ import (
 
 	"github.com/jessevdk/go-flags"
 	"github.com/ubie-sandbox/spannerdef"
-	"github.com/ubie-sandbox/spannerdef/database"
-	"github.com/ubie-sandbox/spannerdef/database/spanner"
 )
 
-var version = "dev"
+var (
+	version   = "dev"
+	buildDate = "unknown"
+)
 
 // parseOptions parses command line options
-func parseOptions(args []string) (database.Config, *spannerdef.Options) {
+func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 	var opts struct {
 		ProjectID  string   `short:"p" long:"project" description:"Google Cloud Project ID (or set SPANNER_PROJECT_ID)" value-name:"project_id"`
 		InstanceID string   `short:"i" long:"instance" description:"Spanner Instance ID (or set SPANNER_INSTANCE_ID)" value-name:"instance_id"`
@@ -41,7 +42,7 @@ func parseOptions(args []string) (database.Config, *spannerdef.Options) {
 	}
 
 	if opts.Version {
-		fmt.Println(version)
+		fmt.Printf("spannerdef %s (built: %s)\n", version, buildDate)
 		os.Exit(0)
 	}
 
@@ -82,10 +83,10 @@ func parseOptions(args []string) (database.Config, *spannerdef.Options) {
 		DryRun:      opts.DryRun,
 		Export:      opts.Export,
 		EnableDrop:  opts.EnableDrop,
-		Config:      database.ParseGeneratorConfig(opts.Config),
+		Config:      spannerdef.ParseGeneratorConfig(opts.Config),
 	}
 
-	config := database.Config{
+	config := spannerdef.Config{
 		ProjectID:  opts.ProjectID,
 		InstanceID: opts.InstanceID,
 		DatabaseID: opts.DatabaseID,
@@ -97,7 +98,7 @@ func parseOptions(args []string) (database.Config, *spannerdef.Options) {
 func main() {
 	config, options := parseOptions(os.Args[1:])
 
-	db, err := spanner.NewDatabase(config)
+	db, err := spannerdef.NewDatabase(config)
 	if err != nil {
 		log.Fatal(err)
 	}
