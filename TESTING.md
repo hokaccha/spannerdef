@@ -26,6 +26,25 @@ make test-local
 ./test-local.sh
 ```
 
+### 環境変数不要での実行
+
+**NEW**: `SPANNER_EMULATOR_HOST`を指定せずにテストを実行できます：
+
+```bash
+# emulatorを起動
+docker-compose up -d
+
+# emulatorの準備（初回のみ必要）
+./test-local.sh --keep-running  # または make test-local-keep
+
+# その後は環境変数なしでテスト実行可能
+go test -v ./integration_test.go
+# または
+make test-integration-only
+```
+
+emulatorが起動していない場合、テストは自動的にスキップされます。
+
 ### 詳細なコマンド
 
 ```bash

@@ -2,6 +2,7 @@ package spannerdef_test
 
 import (
 	"context"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -25,9 +26,16 @@ type TestCase struct {
 // getTestConfig returns the test database configuration for Spanner emulator
 func getTestConfig(t *testing.T) database.Config {
 	// Check if running against Spanner emulator
-	emulatorHost := os.Getenv("SPANNER_EMULATOR_HOST")
-	if emulatorHost == "" {
-		t.Skip("Integration tests require Spanner emulator. Set SPANNER_EMULATOR_HOST to run against emulator.")
+	emulatorHost := getEnvOrDefault("SPANNER_EMULATOR_HOST", "localhost:9010")
+	
+	// Verify emulator is actually running by checking if host is reachable
+	if !isEmulatorRunning(emulatorHost) {
+		t.Skipf("Integration tests require Spanner emulator. Please start it with: docker-compose up -d")
+	}
+
+	// Set SPANNER_EMULATOR_HOST if not already set
+	if os.Getenv("SPANNER_EMULATOR_HOST") == "" {
+		os.Setenv("SPANNER_EMULATOR_HOST", emulatorHost)
 	}
 
 	// Default values for emulator (can be overridden by environment variables)
@@ -50,6 +58,16 @@ func getEnvOrDefault(envVar, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// isEmulatorRunning checks if Spanner emulator is running on the given host
+func isEmulatorRunning(host string) bool {
+	conn, err := net.DialTimeout("tcp", host, 1*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // recreateDatabase drops and recreates the test database for a clean state

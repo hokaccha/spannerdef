@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration test-local test-local-keep clean help
+.PHONY: build test test-unit test-integration test-local test-local-keep test-integration-only clean help
 
 build:
 	go build -o bin/spannerdef ./cmd/spannerdef
@@ -23,6 +23,14 @@ test-stop:
 	@echo "Stopping Spanner emulator..."
 	./test-local.sh --stop
 
+test-integration-only:
+	@echo "Running integration tests (emulator must be already running)..."
+	@echo "If emulator is not running, start it with: docker-compose up -d"
+	CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER=http://localhost:9020/ \
+	SPANNER_EMULATOR_HOST=localhost:9010 \
+	SPANNER_EMULATOR_HOST_REST=localhost:9020 \
+	go test -v ./integration_test.go -count=1
+
 clean:
 	rm -rf bin/
 
@@ -33,12 +41,13 @@ setup-emulator:
 
 help:
 	@echo "Available targets:"
-	@echo "  build            - Build spannerdef binary"
-	@echo "  test             - Run unit tests only"
-	@echo "  test-unit        - Run unit tests only"
-	@echo "  test-local       - Run all tests with Spanner emulator (start & stop)"
-	@echo "  test-integration - Same as test-local"
-	@echo "  test-local-keep  - Run tests but keep emulator running"
-	@echo "  test-stop        - Stop running Spanner emulator"
-	@echo "  clean            - Clean build artifacts"
-	@echo "  help             - Show this help message"
+	@echo "  build                - Build spannerdef binary"
+	@echo "  test                 - Run unit tests only"
+	@echo "  test-unit            - Run unit tests only"
+	@echo "  test-local           - Run all tests with Spanner emulator (start & stop)"
+	@echo "  test-integration     - Same as test-local"
+	@echo "  test-local-keep      - Run tests but keep emulator running"
+	@echo "  test-integration-only- Run integration tests only (emulator must be running)"
+	@echo "  test-stop            - Stop running Spanner emulator"
+	@echo "  clean                - Clean build artifacts"
+	@echo "  help                 - Show this help message"
