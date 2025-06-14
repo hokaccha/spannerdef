@@ -1,4 +1,0 @@
-5b1b0598e148633cf0a69855e3de1a7cdb192a8a9c32e0b89da272318f7ba1d2  spannerdef-v1.0.0-test-darwin-amd64
-d79e5f5cf6c0b256440d69aa9c5a7759465d347bb6ca32aa061106d33cdef312  spannerdef-v1.0.0-test-darwin-arm64
-6526121d2afb05b5617e5455859c1b8cdaf652265d875ff6448e02f04b03314b  spannerdef-v1.0.0-test-linux-amd64
-d3590da0be77a08733bf970a9eab9ab5bafe41a90d54d853a98bfe0e9bc066ab  spannerdef-v1.0.0-test-linux-arm64

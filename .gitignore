@@ -1,3 +1,4 @@
 /spannerdef
 .env
 .env.*
+dist/
