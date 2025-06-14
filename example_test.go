@@ -5,7 +5,6 @@ import (
 	"log"
 
 	"github.com/ubie-sandbox/spannerdef"
-	"github.com/ubie-sandbox/spannerdef/database"
 )
 
 func ExampleGenerateIdempotentDDLs() {
@@ -27,7 +26,7 @@ func ExampleGenerateIdempotentDDLs() {
 		CREATE INDEX IdxEmail ON Users (Email);
 	`
 
-	ddls, err := spannerdef.GenerateIdempotentDDLs(desiredDDLs, currentDDLs, database.GeneratorConfig{})
+	ddls, err := spannerdef.GenerateIdempotentDDLs(desiredDDLs, currentDDLs, spannerdef.GeneratorConfig{})
 	if err != nil {
 		log.Fatal(err)
 	}

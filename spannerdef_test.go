@@ -1,22 +1,13 @@
-package spannerdef_test
+package spannerdef
 
 import (
 	"context"
-	"net"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
-	"cloud.google.com/go/spanner/admin/instance/apiv1/instancepb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/ubie-sandbox/spannerdef"
-	"github.com/ubie-sandbox/spannerdef/database"
-	"github.com/ubie-sandbox/spannerdef/database/spanner"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // TestCase represents a single integration test case
@@ -27,237 +18,10 @@ type TestCase struct {
 	Expected string // Expected DDL output (empty means no changes expected)
 }
 
-// getTestConfig returns the test database configuration for Spanner emulator
-func getTestConfig(t *testing.T) database.Config {
-	// Check if running against Spanner emulator
-	emulatorHost := getEnvOrDefault("SPANNER_EMULATOR_HOST", "localhost:9010")
-
-	// Verify emulator is actually running by checking if host is reachable
-	if !isEmulatorRunning(emulatorHost) {
-		t.Fatalf("Integration tests require Spanner emulator. Please start it with: docker-compose up -d")
-	}
-
-	// Set up environment variables for emulator
-	setupEmulatorEnvironment(emulatorHost)
-
-	// Default values for emulator (can be overridden by environment variables)
-	projectID := getEnvOrDefault("SPANNER_PROJECT_ID", "test-project")
-	instanceID := getEnvOrDefault("SPANNER_INSTANCE_ID", "test-instance")
-	databaseID := getEnvOrDefault("SPANNER_DATABASE_ID", "test-database")
-
-	// Ensure instance and database exist
-	ensureInstanceAndDatabase(t, projectID, instanceID, databaseID)
-
-	t.Logf("Running integration tests against Spanner emulator (host: %s, project: %s)", emulatorHost, projectID)
-
-	return database.Config{
-		ProjectID:  projectID,
-		InstanceID: instanceID,
-		DatabaseID: databaseID,
-	}
-}
-
-// getEnvOrDefault returns the environment variable value or a default value
-func getEnvOrDefault(envVar, defaultValue string) string {
-	if value := os.Getenv(envVar); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-// isEmulatorRunning checks if Spanner emulator is running on the given host
-func isEmulatorRunning(host string) bool {
-	conn, err := net.DialTimeout("tcp", host, 1*time.Second)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
-
-// setupEmulatorEnvironment sets up environment variables for emulator
-func setupEmulatorEnvironment(emulatorHost string) {
-	// Set SPANNER_EMULATOR_HOST if not already set
-	if os.Getenv("SPANNER_EMULATOR_HOST") == "" {
-		os.Setenv("SPANNER_EMULATOR_HOST", emulatorHost)
-	}
-
-	// Set other emulator-related environment variables
-	if os.Getenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER") == "" {
-		os.Setenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER", "http://localhost:9020/")
-	}
-	if os.Getenv("SPANNER_EMULATOR_HOST_REST") == "" {
-		os.Setenv("SPANNER_EMULATOR_HOST_REST", "localhost:9020")
-	}
-	if os.Getenv("CLOUDSDK_CORE_PROJECT") == "" {
-		os.Setenv("CLOUDSDK_CORE_PROJECT", "test-project")
-	}
-	if os.Getenv("CLOUDSDK_AUTH_DISABLE_CREDENTIALS") == "" {
-		os.Setenv("CLOUDSDK_AUTH_DISABLE_CREDENTIALS", "true")
-	}
-}
-
-// ensureInstanceAndDatabase creates instance and database if they don't exist
-func ensureInstanceAndDatabase(t *testing.T, projectID, instanceID, databaseID string) {
-	t.Helper()
-
-	ctx := context.Background()
-
-	// Create instance if it doesn't exist
-	if !instanceExists(t, ctx, projectID, instanceID) {
-		createInstance(t, ctx, projectID, instanceID)
-	}
-
-	// Create database if it doesn't exist
-	if !databaseExists(t, ctx, projectID, instanceID, databaseID) {
-		createDatabase(t, ctx, projectID, instanceID, databaseID)
-	}
-}
-
-// instanceExists checks if a Spanner instance exists using Admin SDK
-func instanceExists(t *testing.T, ctx context.Context, projectID, instanceID string) bool {
-	t.Helper()
-
-	// Create the admin database client for instance operations
-	adminDB, err := spanner.NewAdminDatabase(database.Config{
-		ProjectID:  projectID,
-		InstanceID: instanceID,
-		DatabaseID: "dummy", // Not used for instance operations
-	})
-	if err != nil {
-		t.Logf("Failed to create admin client: %v", err)
-		return false
-	}
-	defer adminDB.Close()
-
-	// Try to get the instance
-	instancePath := "projects/" + projectID + "/instances/" + instanceID
-	_, err = adminDB.InstanceAdminClient().GetInstance(ctx, &instancepb.GetInstanceRequest{
-		Name: instancePath,
-	})
-
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			t.Logf("Instance %s does not exist", instanceID)
-			return false
-		}
-		t.Logf("Error checking instance existence: %v", err)
-		return false
-	}
-
-	t.Logf("Instance %s exists", instanceID)
-	return true
-}
-
-// createInstance creates a Spanner instance using Admin SDK
-func createInstance(t *testing.T, ctx context.Context, projectID, instanceID string) {
-	t.Helper()
-
-	t.Logf("Creating Spanner instance: %s", instanceID)
-
-	// Create the admin database client for instance operations
-	adminDB, err := spanner.NewAdminDatabase(database.Config{
-		ProjectID:  projectID,
-		InstanceID: instanceID,
-		DatabaseID: "dummy", // Not used for instance operations
-	})
-	require.NoError(t, err)
-	defer adminDB.Close()
-
-	// Create the instance
-	instancePath := "projects/" + projectID + "/instances/" + instanceID
-	parentPath := "projects/" + projectID
-
-	op, err := adminDB.InstanceAdminClient().CreateInstance(ctx, &instancepb.CreateInstanceRequest{
-		Parent:     parentPath,
-		InstanceId: instanceID,
-		Instance: &instancepb.Instance{
-			Name:        instancePath,
-			Config:      "projects/" + projectID + "/instanceConfigs/emulator-config",
-			DisplayName: "Test instance for integration tests",
-			NodeCount:   1,
-		},
-	})
-	require.NoError(t, err)
-
-	// Wait for the operation to complete
-	_, err = op.Wait(ctx)
-	require.NoError(t, err)
-
-	t.Logf("Instance %s created successfully", instanceID)
-}
-
-// databaseExists checks if a Spanner database exists using Admin SDK
-func databaseExists(t *testing.T, ctx context.Context, projectID, instanceID, databaseID string) bool {
-	t.Helper()
-
-	// Create the admin database client
-	adminDB, err := spanner.NewAdminDatabase(database.Config{
-		ProjectID:  projectID,
-		InstanceID: instanceID,
-		DatabaseID: databaseID,
-	})
-	if err != nil {
-		t.Logf("Failed to create admin client: %v", err)
-		return false
-	}
-	defer adminDB.Close()
-
-	// Try to get the database
-	databasePath := "projects/" + projectID + "/instances/" + instanceID + "/databases/" + databaseID
-	_, err = adminDB.DatabaseAdminClient().GetDatabase(ctx, &databasepb.GetDatabaseRequest{
-		Name: databasePath,
-	})
-
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			t.Logf("Database %s does not exist", databaseID)
-			return false
-		}
-		t.Logf("Error checking database existence: %v", err)
-		return false
-	}
-
-	t.Logf("Database %s exists", databaseID)
-	return true
-}
-
-// createDatabase creates a Spanner database using Admin SDK
-func createDatabase(t *testing.T, ctx context.Context, projectID, instanceID, databaseID string) {
-	t.Helper()
-
-	t.Logf("Creating Spanner database: %s", databaseID)
-
-	// Create the admin database client
-	adminDB, err := spanner.NewAdminDatabase(database.Config{
-		ProjectID:  projectID,
-		InstanceID: instanceID,
-		DatabaseID: databaseID,
-	})
-	require.NoError(t, err)
-	defer adminDB.Close()
-
-	// Create the database
-	instancePath := "projects/" + projectID + "/instances/" + instanceID
-	createStatement := "CREATE DATABASE `" + databaseID + "`"
-
-	op, err := adminDB.DatabaseAdminClient().CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{
-		Parent:          instancePath,
-		CreateStatement: createStatement,
-	})
-	require.NoError(t, err)
-
-	// Wait for the operation to complete
-	_, err = op.Wait(ctx)
-	require.NoError(t, err)
-
-	t.Logf("Database %s created successfully", databaseID)
-}
-
 // recreateDatabase drops and recreates the test database for a clean state
-func recreateDatabase(t *testing.T, config database.Config) database.Database {
+func recreateDatabase(t *testing.T, config Config) Database {
 	// For emulator, we can recreate the database for each test
-	adminDB, err := spanner.NewAdminDatabase(config)
+	adminDB, err := NewAdminDatabase(config)
 	require.NoError(t, err)
 	defer adminDB.Close()
 
@@ -275,25 +39,25 @@ func recreateDatabase(t *testing.T, config database.Config) database.Database {
 	time.Sleep(100 * time.Millisecond)
 
 	// Return regular database connection
-	db, err := spanner.NewDatabase(config)
+	db, err := NewDatabase(config)
 	require.NoError(t, err)
 	return db
 }
 
 // applySchema applies the given schema and returns the generated DDLs
-func applySchema(t *testing.T, db database.Database, schema string, enableDrop bool) []string {
+func applySchema(t *testing.T, db Database, schema string, enableDrop bool) []string {
 	t.Helper()
 
 	// Generate DDLs
 	currentDDLs, err := db.DumpDDLs()
 	require.NoError(t, err)
 
-	ddls, err := spannerdef.GenerateIdempotentDDLs(schema, currentDDLs, database.GeneratorConfig{})
+	ddls, err := GenerateIdempotentDDLs(schema, currentDDLs, GeneratorConfig{})
 	require.NoError(t, err)
 
 	// Apply the DDLs
 	if len(ddls) > 0 {
-		err = database.RunDDLs(db, ddls, enableDrop, true)
+		err = RunDDLs(db, ddls, enableDrop, true)
 		require.NoError(t, err)
 	}
 
@@ -644,14 +408,14 @@ func TestEdgeCases(t *testing.T) {
 		currentDDLs, err := db.DumpDDLs()
 		require.NoError(t, err)
 
-		ddls, err := spannerdef.GenerateIdempotentDDLs(updatedSchema, currentDDLs, database.GeneratorConfig{})
+		ddls, err := GenerateIdempotentDDLs(updatedSchema, currentDDLs, GeneratorConfig{})
 		require.NoError(t, err)
 
 		// DDLs should be generated but DROP COLUMN should be skipped when executed
 		assertDDLContains(t, ddls, "DROP COLUMN")
 
 		// Apply with enableDrop=false - this should skip the DROP COLUMN
-		err = database.RunDDLs(db, ddls, false, true)
+		err = RunDDLs(db, ddls, false, true)
 		require.NoError(t, err)
 
 		// Verify the column is still there (wasn't dropped)
@@ -798,9 +562,9 @@ func TestConfigFiltering(t *testing.T) {
 		`
 
 		// Apply with target table filter
-		options := &spannerdef.Options{
+		options := &Options{
 			DesiredDDLs: schema,
-			Config: database.GeneratorConfig{
+			Config: GeneratorConfig{
 				TargetTables: []string{"Users"},
 			},
 		}
@@ -808,7 +572,7 @@ func TestConfigFiltering(t *testing.T) {
 		currentDDLs, err := db.DumpDDLs()
 		require.NoError(t, err)
 
-		ddls, err := spannerdef.GenerateIdempotentDDLs(schema, currentDDLs, options.Config)
+		ddls, err := GenerateIdempotentDDLs(schema, currentDDLs, options.Config)
 		require.NoError(t, err)
 
 		// Should only create Users table
@@ -833,9 +597,9 @@ func TestConfigFiltering(t *testing.T) {
 		`
 
 		// Apply with skip table filter
-		options := &spannerdef.Options{
+		options := &Options{
 			DesiredDDLs: schema,
-			Config: database.GeneratorConfig{
+			Config: GeneratorConfig{
 				SkipTables: []string{"Posts"},
 			},
 		}
@@ -843,7 +607,7 @@ func TestConfigFiltering(t *testing.T) {
 		currentDDLs, err := db.DumpDDLs()
 		require.NoError(t, err)
 
-		ddls, err := spannerdef.GenerateIdempotentDDLs(schema, currentDDLs, options.Config)
+		ddls, err := GenerateIdempotentDDLs(schema, currentDDLs, options.Config)
 		require.NoError(t, err)
 
 		// Should only create Users table

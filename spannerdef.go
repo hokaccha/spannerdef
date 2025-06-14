@@ -6,9 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-
-	"github.com/ubie-sandbox/spannerdef/database"
-	"github.com/ubie-sandbox/spannerdef/schema"
 )
 
 type Options struct {
@@ -16,11 +13,11 @@ type Options struct {
 	DryRun      bool
 	Export      bool
 	EnableDrop  bool
-	Config      database.GeneratorConfig
+	Config      GeneratorConfig
 }
 
 // Main function shared by spannerdef command
-func Run(db database.Database, options *Options) {
+func Run(db Database, options *Options) {
 	currentDDLs, err := db.DumpDDLs()
 	if err != nil {
 		log.Fatalf("Error on DumpDDLs: %s", err)
@@ -51,20 +48,20 @@ func Run(db database.Database, options *Options) {
 		return
 	}
 
-	err = database.RunDDLs(db, ddls, options.EnableDrop, false)
+	err = RunDDLs(db, ddls, options.EnableDrop, false)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
 // GenerateIdempotentDDLs generates DDLs to transform current schema to desired schema
-func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config database.GeneratorConfig) ([]string, error) {
-	currentSchema, err := schema.ParseDDLs(currentDDLs)
+func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorConfig) ([]string, error) {
+	currentSchema, err := ParseDDLs(currentDDLs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse current DDLs: %v", err)
 	}
 
-	desiredSchema, err := schema.ParseDDLs(desiredDDLs)
+	desiredSchema, err := ParseDDLs(desiredDDLs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse desired DDLs: %v", err)
 	}
@@ -73,15 +70,15 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config database.Gen
 	currentSchema = filterSchema(currentSchema, config)
 	desiredSchema = filterSchema(desiredSchema, config)
 
-	ddls := schema.GenerateDDLs(currentSchema, desiredSchema)
+	ddls := GenerateDDLs(currentSchema, desiredSchema)
 	return ddls, nil
 }
 
 // filterSchema applies target/skip table filters
-func filterSchema(s *schema.Schema, config database.GeneratorConfig) *schema.Schema {
-	filtered := &schema.Schema{
-		Tables:  make(map[string]*schema.Table),
-		Indexes: make(map[string]*schema.Index),
+func filterSchema(s *Schema, config GeneratorConfig) *Schema {
+	filtered := &Schema{
+		Tables:  make(map[string]*Table),
+		Indexes: make(map[string]*Index),
 	}
 
 	// Filter tables
@@ -102,7 +99,7 @@ func filterSchema(s *schema.Schema, config database.GeneratorConfig) *schema.Sch
 }
 
 // shouldIncludeTable checks if a table should be included based on config
-func shouldIncludeTable(tableName string, config database.GeneratorConfig) bool {
+func shouldIncludeTable(tableName string, config GeneratorConfig) bool {
 	// Check skip tables
 	for _, skip := range config.SkipTables {
 		if tableName == skip {
