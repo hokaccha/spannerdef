@@ -106,23 +106,25 @@ spannerdef uses Google Cloud authentication. Make sure you have:
 go build ./cmd/spannerdef
 ```
 
-### Test
+### Testing
+
+spannerdef includes comprehensive tests (21 test cases) that use Spanner emulator for safe testing.
 
 ```bash
-# Unit tests
-go test ./...
+# Start Spanner emulator
+docker-compose up -d
 
-# Integration tests (requires real Spanner database)
-# Set test database configuration
-export SPANNER_PROJECT_ID=my-test-project
-export SPANNER_INSTANCE_ID=my-test-instance
-export SPANNER_DATABASE_ID=my-test-database
+# Run all tests
+make test
 
-go test -v ./integration_test
+# Run tests with verbose output
+make test-emulator
 
-# Run tests (modifies database)
-RUN_INTEGRATION_TESTS=1 go test -v ./integration_test
+# Run specific tests
+go test -v . -run TestBasicOperations
 ```
+
+**Requirements**: Docker/Docker Compose for Spanner emulator. Tests automatically skip if emulator is not running. No gcloud CLI required.
 
 ## Limitations
 
