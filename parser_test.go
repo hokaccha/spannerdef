@@ -46,6 +46,41 @@ func TestParseDDLs_CreateTable(t *testing.T) {
 	assert.False(t, nameCol.NotNull)
 }
 
+func TestParseDDLs_CreateTableWithDefault(t *testing.T) {
+	ddl := `
+		CREATE TABLE users (
+			id INT64 NOT NULL,
+			name STRING(100),
+			is_active BOOL NOT NULL DEFAULT (FALSE),
+			created_at TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP())
+		) PRIMARY KEY (id)
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	require.Len(t, schema.Tables, 1)
+
+	table, exists := schema.Tables["users"]
+	require.True(t, exists)
+	assert.Equal(t, "users", table.Name)
+	assert.Len(t, table.Columns, 4)
+
+	// Check is_active column with DEFAULT (FALSE)
+	isActiveCol := table.Columns["is_active"]
+	assert.Equal(t, "is_active", isActiveCol.Name)
+	assert.Equal(t, "BOOL", isActiveCol.Type)
+	assert.True(t, isActiveCol.NotNull)
+	assert.Equal(t, "(FALSE)", isActiveCol.Default)
+
+	// Check created_at column with DEFAULT (CURRENT_TIMESTAMP())
+	createdAtCol := table.Columns["created_at"]
+	assert.Equal(t, "created_at", createdAtCol.Name)
+	assert.Equal(t, "TIMESTAMP", createdAtCol.Type)
+	assert.True(t, createdAtCol.NotNull)
+	assert.Equal(t, "(CURRENT_TIMESTAMP())", createdAtCol.Default)
+}
+
 func TestParseDDLs_CreateIndex(t *testing.T) {
 	ddl := `
 		CREATE TABLE users (
