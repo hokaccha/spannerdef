@@ -334,7 +334,7 @@ func TestNewAdminDatabase(t *testing.T) {
 
 func TestSpannerAdminDatabase_DatabaseLifecycle(t *testing.T) {
 	config := getTestConfig(t)
-	
+
 	// Use a unique database name for this test
 	config.DatabaseID = "test-lifecycle-db"
 
@@ -351,7 +351,7 @@ func TestSpannerAdminDatabase_DatabaseLifecycle(t *testing.T) {
 	// Verify database exists by trying to connect to it
 	db, err := NewDatabase(config)
 	require.NoError(t, err)
-	
+
 	// Test basic operation
 	ddls, err := db.DumpDDLs()
 	require.NoError(t, err)

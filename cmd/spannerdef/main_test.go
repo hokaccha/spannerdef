@@ -29,7 +29,7 @@ func TestParseOptions_BasicArgs(t *testing.T) {
 func TestParseOptions_ShortArgs(t *testing.T) {
 	args := []string{
 		"-p", "test-project",
-		"-i", "test-instance", 
+		"-i", "test-instance",
 		"-d", "test-database",
 		"--export", // Use export mode to avoid file reading
 	}
@@ -72,7 +72,7 @@ func TestParseOptions_AllFlags(t *testing.T) {
 func TestParseOptions_EnvironmentVariables(t *testing.T) {
 	// Save original environment
 	originalProject := os.Getenv("SPANNER_PROJECT_ID")
-	originalInstance := os.Getenv("SPANNER_INSTANCE_ID") 
+	originalInstance := os.Getenv("SPANNER_INSTANCE_ID")
 	originalDatabase := os.Getenv("SPANNER_DATABASE_ID")
 
 	// Set test environment variables
@@ -140,7 +140,7 @@ func TestParseOptions_CLIOverridesEnvironment(t *testing.T) {
 
 	args := []string{
 		"--project", "cli-project",
-		"--instance", "cli-instance", 
+		"--instance", "cli-instance",
 		"--database", "cli-database",
 		"--export", // Use export mode to avoid file reading
 	}
@@ -167,7 +167,7 @@ func TestParseOptions_ConfigFile(t *testing.T) {
 	assert.Equal(t, "test-project", config.ProjectID)
 	assert.Equal(t, "test-instance", config.InstanceID)
 	assert.Equal(t, "test-database", config.DatabaseID)
-	
+
 	// Config should be empty with empty path
 	assert.Empty(t, options.Config.TargetTables)
 	assert.Empty(t, options.Config.SkipTables)
@@ -205,7 +205,7 @@ func TestParseOptions_MultipleFiles(t *testing.T) {
 	assert.Equal(t, "test-project", config.ProjectID)
 	assert.Equal(t, "test-instance", config.InstanceID)
 	assert.Equal(t, "test-database", config.DatabaseID)
-	
+
 	// Check that files were read and combined
 	assert.Contains(t, options.DesiredDDLs, "CREATE TABLE Users")
 	assert.Contains(t, options.DesiredDDLs, "CREATE TABLE Posts")
@@ -259,7 +259,7 @@ func setupTestEnv(t *testing.T) func() {
 // But we can test that the parsing logic works correctly
 func TestVersionFlag(t *testing.T) {
 	args := []string{"--version"}
-	
+
 	// We can't test the actual exit, but we can verify the flag is recognized
 	for _, arg := range args {
 		if arg == "--version" {
