@@ -27,6 +27,7 @@ type Column struct {
 	Name    string
 	Type    string
 	NotNull bool
+	Default string // For DEFAULT clause value
 	Options string // For column options like ALLOW COMMIT TIMESTAMP
 }
 
@@ -94,6 +95,13 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 			Name:    col.Name.Name,
 			Type:    formatColumnType(col.Type),
 			NotNull: col.NotNull,
+		}
+
+		// Extract DEFAULT clause if present
+		if col.DefaultSemantics != nil {
+			if defaultExpr, ok := col.DefaultSemantics.(*ast.ColumnDefaultExpr); ok {
+				column.Default = "(" + defaultExpr.Expr.SQL() + ")"
+			}
 		}
 
 		if col.PrimaryKey {
@@ -286,6 +294,9 @@ func generateCreateTable(table *Table) string {
 		if col.NotNull {
 			def += " NOT NULL"
 		}
+		if col.Default != "" {
+			def += " DEFAULT " + col.Default
+		}
 		columnDefs = append(columnDefs, def)
 	}
 
@@ -332,6 +343,9 @@ func generateAlterTable(current, desired *Table) []string {
 			def := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", desired.Name, col.Name, col.Type)
 			if col.NotNull {
 				def += " NOT NULL"
+			}
+			if col.Default != "" {
+				def += " DEFAULT " + col.Default
 			}
 			ddls = append(ddls, def)
 		}
