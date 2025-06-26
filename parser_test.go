@@ -437,3 +437,135 @@ INTERLEAVE IN PARENT users ON DELETE CASCADE`
 
 	assert.Equal(t, expectedDDL, ddls[0])
 }
+
+func TestGenerateDDLs_TableCreationOrder(t *testing.T) {
+	current := &Schema{
+		Tables:  make(map[string]*Table),
+		Indexes: make(map[string]*Index),
+	}
+
+	desired := &Schema{
+		Tables: map[string]*Table{
+			"Posts": {
+				Name: "Posts",
+				Columns: map[string]*Column{
+					"Id": {
+						Name:    "Id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+					"PostId": {
+						Name:    "PostId",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey:  []string{"Id", "PostId"},
+				ParentTable: "Users",
+				OnDelete:    "ON DELETE CASCADE",
+			},
+			"Users": {
+				Name: "Users",
+				Columns: map[string]*Column{
+					"Id": {
+						Name:    "Id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey: []string{"Id"},
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	ddls := GenerateDDLs(current, desired)
+	require.Len(t, ddls, 2)
+
+	// Users table should come before Posts table
+	assert.Contains(t, ddls[0], "CREATE TABLE Users")
+	assert.Contains(t, ddls[1], "CREATE TABLE Posts")
+	assert.Contains(t, ddls[1], "INTERLEAVE IN PARENT Users")
+}
+
+func TestGenerateDDLs_ColumnOrder(t *testing.T) {
+	current := &Schema{
+		Tables:  make(map[string]*Table),
+		Indexes: make(map[string]*Index),
+	}
+
+	desired := &Schema{
+		Tables: map[string]*Table{
+			"test": {
+				Name: "test",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+						Order:   0,
+					},
+					"name": {
+						Name:    "name",
+						Type:    "STRING(100)",
+						NotNull: false,
+						Order:   1,
+					},
+					"created_at": {
+						Name:    "created_at",
+						Type:    "TIMESTAMP",
+						NotNull: true,
+						Order:   2,
+					},
+				},
+				PrimaryKey: []string{"id"},
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	ddls := GenerateDDLs(current, desired)
+	require.Len(t, ddls, 1)
+
+	expectedDDL := `CREATE TABLE test (
+  id INT64 NOT NULL,
+  name STRING(100),
+  created_at TIMESTAMP NOT NULL
+) PRIMARY KEY (id)`
+
+	assert.Equal(t, expectedDDL, ddls[0])
+}
+
+func TestParseDDLs_ColumnOrder(t *testing.T) {
+	ddl := `
+		CREATE TABLE test (
+			id INT64 NOT NULL,
+			name STRING(100),
+			created_at TIMESTAMP NOT NULL
+		) PRIMARY KEY (id)
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	table := schema.Tables["test"]
+	require.NotNil(t, table)
+
+	// Check column order
+	assert.Equal(t, 0, table.Columns["id"].Order)
+	assert.Equal(t, 1, table.Columns["name"].Order)
+	assert.Equal(t, 2, table.Columns["created_at"].Order)
+
+	// Generate DDL and check order is preserved
+	current := &Schema{Tables: make(map[string]*Table), Indexes: make(map[string]*Index)}
+	ddls := GenerateDDLs(current, schema)
+	require.Len(t, ddls, 1)
+
+	expectedDDL := `CREATE TABLE test (
+  id INT64 NOT NULL,
+  name STRING(100),
+  created_at TIMESTAMP NOT NULL
+) PRIMARY KEY (id)`
+
+	assert.Equal(t, expectedDDL, ddls[0])
+}
