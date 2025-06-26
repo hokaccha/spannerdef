@@ -337,10 +337,10 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 			) PRIMARY KEY (Id);
 
 			CREATE TABLE Posts (
-				UserId INT64 NOT NULL,
+				Id INT64 NOT NULL,
 				PostId INT64 NOT NULL,
 				Title STRING(255)
-			) PRIMARY KEY (UserId, PostId),
+			) PRIMARY KEY (Id, PostId),
 			INTERLEAVE IN PARENT Users ON DELETE CASCADE;
 		`
 
@@ -350,6 +350,105 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 
 		// Note: Spanner emulator may not preserve INTERLEAVE clauses in DDL dump
 		// This is an emulator limitation, not a spannerdef issue
+	})
+
+	t.Run("InterleavedTablesOrder", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Test that parent table is created before child table
+		// This would fail in the real Spanner if order is wrong
+		schema := `
+			CREATE TABLE Posts (
+				Id INT64 NOT NULL,
+				PostId INT64 NOT NULL,
+				Title STRING(255)
+			) PRIMARY KEY (Id, PostId),
+			INTERLEAVE IN PARENT Users ON DELETE CASCADE;
+
+			CREATE TABLE Users (
+				Id INT64 NOT NULL,
+				Name STRING(100)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, schema, false)
+		
+		// Verify that Users table DDL comes before Posts table DDL
+		usersIndex := -1
+		postsIndex := -1
+		for i, ddl := range ddls {
+			if strings.Contains(ddl, "CREATE TABLE Users") {
+				usersIndex = i
+			}
+			if strings.Contains(ddl, "CREATE TABLE Posts") {
+				postsIndex = i
+			}
+		}
+		
+		if usersIndex != -1 && postsIndex != -1 {
+			assert.Less(t, usersIndex, postsIndex, "Users table should be created before Posts table")
+		}
+		
+		assertDDLContains(t, ddls, "CREATE TABLE Users")
+		assertDDLContains(t, ddls, "CREATE TABLE Posts")
+	})
+
+	t.Run("ColumnOrdering", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Test that column order is preserved as written in DDL
+		schema := `
+			CREATE TABLE Test (
+				third_column STRING(100),
+				first_column INT64 NOT NULL,
+				second_column BOOL,
+				fourth_column TIMESTAMP
+			) PRIMARY KEY (first_column);
+		`
+
+		ddls := applySchema(t, db, schema, false)
+		assertDDLContains(t, ddls, "CREATE TABLE Test")
+
+		// Verify that the generated DDL preserves column order
+		for _, ddl := range ddls {
+			if strings.Contains(ddl, "CREATE TABLE Test") {
+				// Check that columns appear in the original order
+				thirdPos := strings.Index(ddl, "third_column")
+				firstPos := strings.Index(ddl, "first_column")
+				secondPos := strings.Index(ddl, "second_column")
+				fourthPos := strings.Index(ddl, "fourth_column")
+				
+				if thirdPos != -1 && firstPos != -1 && secondPos != -1 && fourthPos != -1 {
+					assert.Less(t, thirdPos, firstPos, "third_column should come before first_column")
+					assert.Less(t, firstPos, secondPos, "first_column should come before second_column")
+					assert.Less(t, secondPos, fourthPos, "second_column should come before fourth_column")
+				}
+				break
+			}
+		}
+	})
+
+	t.Run("DefaultClauseSupport", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		schema := `
+			CREATE TABLE Users (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				IsActive BOOL NOT NULL DEFAULT (TRUE),
+				CreatedAt TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP())
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, schema, false)
+		assertDDLContains(t, ddls, "CREATE TABLE Users")
+		
+		// Verify idempotency with default clauses
+		ddls = applySchema(t, db, schema, false)
+		assert.Empty(t, ddls, "Schema with DEFAULT clauses should be idempotent")
 	})
 }
 

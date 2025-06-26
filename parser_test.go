@@ -285,3 +285,287 @@ func TestGenerateDDLs_CreateIndex(t *testing.T) {
 	require.Len(t, ddls, 1)
 	assert.Equal(t, "CREATE INDEX idx_name ON users (name)", ddls[0])
 }
+
+func TestParseDDLs_InterleaveInParent(t *testing.T) {
+	ddl := `
+		CREATE TABLE Users (
+			Id INT64 NOT NULL,
+			Name STRING(100)
+		) PRIMARY KEY (Id);
+
+		CREATE TABLE Posts (
+			Id INT64 NOT NULL,
+			PostId INT64 NOT NULL,
+			Title STRING(255)
+		) PRIMARY KEY (Id, PostId),
+		INTERLEAVE IN PARENT Users ON DELETE CASCADE;
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	require.Len(t, schema.Tables, 2)
+
+	// Check Users table (parent)
+	usersTable, exists := schema.Tables["Users"]
+	require.True(t, exists)
+	assert.Equal(t, "Users", usersTable.Name)
+	assert.Empty(t, usersTable.ParentTable)
+	assert.Empty(t, usersTable.OnDelete)
+
+	// Check Posts table (interleaved child)
+	postsTable, exists := schema.Tables["Posts"]
+	require.True(t, exists)
+	assert.Equal(t, "Posts", postsTable.Name)
+	assert.Equal(t, "Users", postsTable.ParentTable)
+	assert.Equal(t, "ON DELETE CASCADE", postsTable.OnDelete)
+}
+
+func TestParseDDLs_InterleaveInParentNoAction(t *testing.T) {
+	ddl := `
+		CREATE TABLE Users (
+			Id INT64 NOT NULL,
+			Name STRING(100)
+		) PRIMARY KEY (Id);
+
+		CREATE TABLE Posts (
+			Id INT64 NOT NULL,
+			PostId INT64 NOT NULL,
+			Title STRING(255)
+		) PRIMARY KEY (Id, PostId),
+		INTERLEAVE IN PARENT Users ON DELETE NO ACTION;
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	postsTable := schema.Tables["Posts"]
+	assert.Equal(t, "Users", postsTable.ParentTable)
+	assert.Equal(t, "ON DELETE NO ACTION", postsTable.OnDelete)
+}
+
+func TestParseDDLs_InterleaveInParentWithoutOnDelete(t *testing.T) {
+	ddl := `
+		CREATE TABLE Users (
+			Id INT64 NOT NULL,
+			Name STRING(100)
+		) PRIMARY KEY (Id);
+
+		CREATE TABLE Posts (
+			Id INT64 NOT NULL,
+			PostId INT64 NOT NULL,
+			Title STRING(255)
+		) PRIMARY KEY (Id, PostId),
+		INTERLEAVE IN PARENT Users;
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	postsTable := schema.Tables["Posts"]
+	assert.Equal(t, "Users", postsTable.ParentTable)
+	assert.Empty(t, postsTable.OnDelete)
+}
+
+func TestGenerateDDLs_CreateInterleaveTable(t *testing.T) {
+	current := &Schema{
+		Tables: map[string]*Table{
+			"users": {
+				Name: "users",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey: []string{"id"},
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	desired := &Schema{
+		Tables: map[string]*Table{
+			"users": {
+				Name: "users",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey: []string{"id"},
+			},
+			"posts": {
+				Name: "posts",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+					"post_id": {
+						Name:    "post_id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+					"title": {
+						Name:    "title",
+						Type:    "STRING(255)",
+						NotNull: false,
+					},
+				},
+				PrimaryKey:  []string{"id", "post_id"},
+				ParentTable: "users",
+				OnDelete:    "ON DELETE CASCADE",
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	ddls := GenerateDDLs(current, desired)
+	require.Len(t, ddls, 1)
+
+	expectedDDL := `CREATE TABLE posts (
+  id INT64 NOT NULL,
+  post_id INT64 NOT NULL,
+  title STRING(255)
+) PRIMARY KEY (id, post_id),
+INTERLEAVE IN PARENT users ON DELETE CASCADE`
+
+	assert.Equal(t, expectedDDL, ddls[0])
+}
+
+func TestGenerateDDLs_TableCreationOrder(t *testing.T) {
+	current := &Schema{
+		Tables:  make(map[string]*Table),
+		Indexes: make(map[string]*Index),
+	}
+
+	desired := &Schema{
+		Tables: map[string]*Table{
+			"Posts": {
+				Name: "Posts",
+				Columns: map[string]*Column{
+					"Id": {
+						Name:    "Id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+					"PostId": {
+						Name:    "PostId",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey:  []string{"Id", "PostId"},
+				ParentTable: "Users",
+				OnDelete:    "ON DELETE CASCADE",
+			},
+			"Users": {
+				Name: "Users",
+				Columns: map[string]*Column{
+					"Id": {
+						Name:    "Id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey: []string{"Id"},
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	ddls := GenerateDDLs(current, desired)
+	require.Len(t, ddls, 2)
+
+	// Users table should come before Posts table
+	assert.Contains(t, ddls[0], "CREATE TABLE Users")
+	assert.Contains(t, ddls[1], "CREATE TABLE Posts")
+	assert.Contains(t, ddls[1], "INTERLEAVE IN PARENT Users")
+}
+
+func TestGenerateDDLs_ColumnOrder(t *testing.T) {
+	current := &Schema{
+		Tables:  make(map[string]*Table),
+		Indexes: make(map[string]*Index),
+	}
+
+	desired := &Schema{
+		Tables: map[string]*Table{
+			"test": {
+				Name: "test",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+						Order:   0,
+					},
+					"name": {
+						Name:    "name",
+						Type:    "STRING(100)",
+						NotNull: false,
+						Order:   1,
+					},
+					"created_at": {
+						Name:    "created_at",
+						Type:    "TIMESTAMP",
+						NotNull: true,
+						Order:   2,
+					},
+				},
+				PrimaryKey: []string{"id"},
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	ddls := GenerateDDLs(current, desired)
+	require.Len(t, ddls, 1)
+
+	expectedDDL := `CREATE TABLE test (
+  id INT64 NOT NULL,
+  name STRING(100),
+  created_at TIMESTAMP NOT NULL
+) PRIMARY KEY (id)`
+
+	assert.Equal(t, expectedDDL, ddls[0])
+}
+
+func TestParseDDLs_ColumnOrder(t *testing.T) {
+	ddl := `
+		CREATE TABLE test (
+			id INT64 NOT NULL,
+			name STRING(100),
+			created_at TIMESTAMP NOT NULL
+		) PRIMARY KEY (id)
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	table := schema.Tables["test"]
+	require.NotNil(t, table)
+
+	// Check column order
+	assert.Equal(t, 0, table.Columns["id"].Order)
+	assert.Equal(t, 1, table.Columns["name"].Order)
+	assert.Equal(t, 2, table.Columns["created_at"].Order)
+
+	// Generate DDL and check order is preserved
+	current := &Schema{Tables: make(map[string]*Table), Indexes: make(map[string]*Index)}
+	ddls := GenerateDDLs(current, schema)
+	require.Len(t, ddls, 1)
+
+	expectedDDL := `CREATE TABLE test (
+  id INT64 NOT NULL,
+  name STRING(100),
+  created_at TIMESTAMP NOT NULL
+) PRIMARY KEY (id)`
+
+	assert.Equal(t, expectedDDL, ddls[0])
+}

@@ -17,9 +17,11 @@ type Schema struct {
 
 // Table represents a Spanner table
 type Table struct {
-	Name       string
-	Columns    map[string]*Column
-	PrimaryKey []string
+	Name        string
+	Columns     map[string]*Column
+	PrimaryKey  []string
+	ParentTable string // empty if not interleaved
+	OnDelete    string // "ON DELETE CASCADE", "ON DELETE NO ACTION", or empty
 }
 
 // Column represents a table column
@@ -29,6 +31,7 @@ type Column struct {
 	NotNull bool
 	Default string // For DEFAULT clause value
 	Options string // For column options like ALLOW COMMIT TIMESTAMP
+	Order   int    // Original order in the DDL
 }
 
 // Index represents a Spanner index
@@ -90,11 +93,12 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	}
 
 	// Process columns
-	for _, col := range stmt.Columns {
+	for i, col := range stmt.Columns {
 		column := &Column{
 			Name:    col.Name.Name,
 			Type:    formatColumnType(col.Type),
 			NotNull: col.NotNull,
+			Order:   i,
 		}
 
 		// Extract DEFAULT clause if present
@@ -114,6 +118,15 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	// Process primary key
 	for _, key := range stmt.PrimaryKeys {
 		table.PrimaryKey = append(table.PrimaryKey, key.Name.Name)
+	}
+
+	// Process interleave information
+	if stmt.Cluster != nil {
+		cluster := stmt.Cluster
+		if cluster.TableName != nil && len(cluster.TableName.Idents) > 0 {
+			table.ParentTable = cluster.TableName.Idents[len(cluster.TableName.Idents)-1].Name
+		}
+		table.OnDelete = string(cluster.OnDelete)
 	}
 
 	schema.Tables[tableName] = table
@@ -251,14 +264,60 @@ func generateAlterTableDDLs(current, desired *Schema) []string {
 func generateCreateTableDDLs(current, desired *Schema) []string {
 	var ddls []string
 
-	// Create new tables
+	// Find new tables that need to be created
+	var newTables []*Table
 	for tableName, table := range desired.Tables {
 		if _, exists := current.Tables[tableName]; !exists {
-			ddls = append(ddls, generateCreateTable(table))
+			newTables = append(newTables, table)
 		}
 	}
 
+	// Sort tables to respect parent-child dependencies
+	sortedTables := sortTablesByDependency(newTables)
+
+	// Create tables in dependency order
+	for _, table := range sortedTables {
+		ddls = append(ddls, generateCreateTable(table))
+	}
+
 	return ddls
+}
+
+// sortTablesByDependency sorts tables to ensure parent tables come before child tables
+func sortTablesByDependency(tables []*Table) []*Table {
+	var result []*Table
+	processed := make(map[string]bool)
+	
+	// Create a map for quick lookup
+	tableMap := make(map[string]*Table)
+	for _, table := range tables {
+		tableMap[table.Name] = table
+	}
+	
+	var processTable func(table *Table)
+	processTable = func(table *Table) {
+		if processed[table.Name] {
+			return
+		}
+		
+		// If this table has a parent, process the parent first
+		if table.ParentTable != "" {
+			if parentTable, exists := tableMap[table.ParentTable]; exists {
+				processTable(parentTable)
+			}
+		}
+		
+		// Process this table
+		result = append(result, table)
+		processed[table.Name] = true
+	}
+	
+	// Process all tables
+	for _, table := range tables {
+		processTable(table)
+	}
+	
+	return result
 }
 
 // generateCreateIndexDDLs generates DDLs to create new indexes
@@ -277,19 +336,25 @@ func generateCreateIndexDDLs(current, desired *Schema) []string {
 
 // generateCreateTable generates CREATE TABLE DDL
 func generateCreateTable(table *Table) string {
-	var parts []string
-	parts = append(parts, fmt.Sprintf("CREATE TABLE %s (", table.Name))
+	var ddl strings.Builder
+	ddl.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", table.Name))
 
-	// Sort columns for consistent output
-	var columnNames []string
-	for name := range table.Columns {
-		columnNames = append(columnNames, name)
+	// Sort columns by original order
+	type columnInfo struct {
+		name  string
+		order int
 	}
-	sort.Strings(columnNames)
+	var columns []columnInfo
+	for name, col := range table.Columns {
+		columns = append(columns, columnInfo{name: name, order: col.Order})
+	}
+	sort.Slice(columns, func(i, j int) bool {
+		return columns[i].order < columns[j].order
+	})
 
 	var columnDefs []string
-	for _, name := range columnNames {
-		col := table.Columns[name]
+	for _, colInfo := range columns {
+		col := table.Columns[colInfo.name]
 		def := fmt.Sprintf("  %s %s", col.Name, col.Type)
 		if col.NotNull {
 			def += " NOT NULL"
@@ -300,17 +365,25 @@ func generateCreateTable(table *Table) string {
 		columnDefs = append(columnDefs, def)
 	}
 
-	parts = append(parts, strings.Join(columnDefs, ",\n"))
+	ddl.WriteString(strings.Join(columnDefs, ",\n"))
 
 	// Add primary key
 	if len(table.PrimaryKey) > 0 {
-		pkDef := fmt.Sprintf(") PRIMARY KEY (%s)", strings.Join(table.PrimaryKey, ", "))
-		parts = append(parts, pkDef)
+		ddl.WriteString(fmt.Sprintf("\n) PRIMARY KEY (%s)", strings.Join(table.PrimaryKey, ", ")))
 	} else {
-		parts = append(parts, ")")
+		ddl.WriteString("\n)")
 	}
 
-	return strings.Join(parts, "\n")
+	// Add interleave clause if present
+	if table.ParentTable != "" {
+		ddl.WriteString(",\n")
+		ddl.WriteString(fmt.Sprintf("INTERLEAVE IN PARENT %s", table.ParentTable))
+		if table.OnDelete != "" {
+			ddl.WriteString(fmt.Sprintf(" %s", table.OnDelete))
+		}
+	}
+
+	return ddl.String()
 }
 
 // generateCreateIndex generates CREATE INDEX DDL
