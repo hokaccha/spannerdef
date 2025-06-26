@@ -337,10 +337,10 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 			) PRIMARY KEY (Id);
 
 			CREATE TABLE Posts (
-				UserId INT64 NOT NULL,
+				Id INT64 NOT NULL,
 				PostId INT64 NOT NULL,
 				Title STRING(255)
-			) PRIMARY KEY (UserId, PostId),
+			) PRIMARY KEY (Id, PostId),
 			INTERLEAVE IN PARENT Users ON DELETE CASCADE;
 		`
 
