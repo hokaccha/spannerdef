@@ -1,6 +1,6 @@
 services:
   spanner-emulator:
-    image: gcr.io/cloud-spanner-emulator/emulator:latest
+    image: gcr.io/cloud-spanner-emulator/emulator:1.5.0
     ports:
       - "9010:9010"  # gRPC port
       - "9020:9020"  # REST port
