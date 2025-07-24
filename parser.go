@@ -431,7 +431,19 @@ func generateAlterTable(current, desired *Table) []string {
 		}
 	}
 
-	// TODO: Handle column type changes (requires more complex logic in Spanner)
+	// Handle column type changes
+	for colName, desiredCol := range desired.Columns {
+		if currentCol, exists := current.Columns[colName]; exists {
+			// Check if column type has changed
+			if currentCol.Type != desiredCol.Type {
+				def := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s", desired.Name, colName, desiredCol.Type)
+				if desiredCol.NotNull {
+					def += " NOT NULL"
+				}
+				ddls = append(ddls, def)
+			}
+		}
+	}
 
 	return ddls
 }
