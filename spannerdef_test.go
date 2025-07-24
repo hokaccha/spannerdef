@@ -450,6 +450,31 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 		ddls = applySchema(t, db, schema, false)
 		assert.Empty(t, ddls, "Schema with DEFAULT clauses should be idempotent")
 	})
+
+	t.Run("ColumnTypeChange", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Initial schema
+		initialSchema := `
+			CREATE TABLE Users (
+				Id INT64 NOT NULL,
+				Name STRING(100)
+			) PRIMARY KEY (Id);
+		`
+		applySchema(t, db, initialSchema, false)
+
+		// Change column type
+		updatedSchema := `
+			CREATE TABLE Users (
+				Id INT64 NOT NULL,
+				Name STRING(200)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, updatedSchema, false)
+		assertDDLContains(t, ddls, "ALTER TABLE Users ALTER COLUMN Name STRING(200)")
+	})
 }
 
 // TestEdgeCases tests edge cases and error conditions
