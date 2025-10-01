@@ -368,3 +368,104 @@ func TestSpannerAdminDatabase_DatabaseLifecycle(t *testing.T) {
 	exists := databaseExists(t, ctx, config.ProjectID, config.InstanceID, config.DatabaseID)
 	assert.False(t, exists, "Database should not exist after drop")
 }
+
+func TestSpannerDatabase_RowDeletionPolicy(t *testing.T) {
+	config := getTestConfig(t)
+
+	// Create admin database to ensure clean state
+	adminDB, err := NewAdminDatabase(config)
+	require.NoError(t, err)
+	defer adminDB.Close()
+
+	ctx := context.Background()
+
+	// Drop and recreate database
+	err = adminDB.DropDatabase(ctx)
+	if err != nil && !strings.Contains(err.Error(), "not found") {
+		t.Logf("Warning: Could not drop database: %v", err)
+	}
+
+	err = adminDB.CreateDatabase(ctx)
+	require.NoError(t, err)
+
+	// Test with regular database connection
+	db, err := NewDatabase(config)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create table with ROW DELETION POLICY
+	ddl := `CREATE TABLE events (
+		id INT64 NOT NULL,
+		name STRING(100),
+		event_date TIMESTAMP NOT NULL
+	) PRIMARY KEY (id),
+	ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 30 DAY))`
+
+	err = db.ExecDDL(ddl)
+	require.NoError(t, err)
+
+	// Dump DDLs and verify ROW DELETION POLICY is preserved
+	dumpedDDLs, err := db.DumpDDLs()
+	require.NoError(t, err)
+	assert.Contains(t, dumpedDDLs, "ROW DELETION POLICY")
+	assert.Contains(t, dumpedDDLs, "OLDER_THAN(event_date, INTERVAL 30 DAY)")
+
+	// Clean up
+	err = adminDB.DropDatabase(ctx)
+	require.NoError(t, err)
+}
+
+func TestSpannerDatabase_RowDeletionPolicyWithInterleave(t *testing.T) {
+	config := getTestConfig(t)
+
+	// Create admin database to ensure clean state
+	adminDB, err := NewAdminDatabase(config)
+	require.NoError(t, err)
+	defer adminDB.Close()
+
+	ctx := context.Background()
+
+	// Drop and recreate database
+	err = adminDB.DropDatabase(ctx)
+	if err != nil && !strings.Contains(err.Error(), "not found") {
+		t.Logf("Warning: Could not drop database: %v", err)
+	}
+
+	err = adminDB.CreateDatabase(ctx)
+	require.NoError(t, err)
+
+	// Test with regular database connection
+	db, err := NewDatabase(config)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create parent and child tables with ROW DELETION POLICY
+	ddls := []string{
+		`CREATE TABLE users (
+			id INT64 NOT NULL
+		) PRIMARY KEY (id)`,
+		`CREATE TABLE events (
+			id INT64 NOT NULL,
+			event_id INT64 NOT NULL,
+			event_date TIMESTAMP NOT NULL
+		) PRIMARY KEY (id, event_id),
+		INTERLEAVE IN PARENT users ON DELETE CASCADE,
+		ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 90 DAY))`,
+	}
+
+	err = db.ExecDDLs(ddls)
+	require.NoError(t, err)
+
+	// Dump DDLs and verify both INTERLEAVE and ROW DELETION POLICY are preserved
+	dumpedDDLs, err := db.DumpDDLs()
+	require.NoError(t, err)
+
+	// Check that events table has both features
+	assert.Contains(t, dumpedDDLs, "INTERLEAVE IN PARENT users")
+	assert.Contains(t, dumpedDDLs, "ROW DELETION POLICY")
+	assert.Contains(t, dumpedDDLs, "OLDER_THAN(event_date, INTERVAL 90 DAY)")
+
+	// Clean up
+	err = adminDB.DropDatabase(ctx)
+	require.NoError(t, err)
+}

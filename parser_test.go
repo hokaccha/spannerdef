@@ -574,3 +574,177 @@ func TestParseDDLs_ColumnOrder(t *testing.T) {
 
 	assert.Equal(t, expectedDDL, ddls[0])
 }
+
+func TestParseDDLs_RowDeletionPolicy(t *testing.T) {
+	ddl := `
+		CREATE TABLE events (
+			id INT64 NOT NULL,
+			name STRING(100),
+			event_date TIMESTAMP NOT NULL
+		) PRIMARY KEY (id),
+		ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 30 DAY))
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	table, exists := schema.Tables["events"]
+	require.True(t, exists)
+	assert.Equal(t, "events", table.Name)
+	assert.Equal(t, "event_date", table.RowDeletionPolicyColumn)
+	assert.Equal(t, int64(30), table.RowDeletionPolicyDays)
+}
+
+func TestGenerateDDLs_CreateTableWithRowDeletionPolicy(t *testing.T) {
+	current := &Schema{
+		Tables:  make(map[string]*Table),
+		Indexes: make(map[string]*Index),
+	}
+
+	desired := &Schema{
+		Tables: map[string]*Table{
+			"events": {
+				Name: "events",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+						Order:   0,
+					},
+					"name": {
+						Name:    "name",
+						Type:    "STRING(100)",
+						NotNull: false,
+						Order:   1,
+					},
+					"event_date": {
+						Name:    "event_date",
+						Type:    "TIMESTAMP",
+						NotNull: true,
+						Order:   2,
+					},
+				},
+				PrimaryKey: []string{"id"},
+				RowDeletionPolicyColumn: "event_date",
+				RowDeletionPolicyDays: 30,
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	ddls := GenerateDDLs(current, desired)
+	require.Len(t, ddls, 1)
+
+	expectedDDL := `CREATE TABLE events (
+  id INT64 NOT NULL,
+  name STRING(100),
+  event_date TIMESTAMP NOT NULL
+) PRIMARY KEY (id),
+ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 30 DAY))`
+
+	assert.Equal(t, expectedDDL, ddls[0])
+}
+
+func TestParseDDLs_RowDeletionPolicyWithInterleave(t *testing.T) {
+	ddl := `
+		CREATE TABLE users (
+			id INT64 NOT NULL
+		) PRIMARY KEY (id);
+
+		CREATE TABLE events (
+			id INT64 NOT NULL,
+			event_id INT64 NOT NULL,
+			event_date TIMESTAMP NOT NULL
+		) PRIMARY KEY (id, event_id),
+		INTERLEAVE IN PARENT users ON DELETE CASCADE,
+		ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 90 DAY))
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	table, exists := schema.Tables["events"]
+	require.True(t, exists)
+	assert.Equal(t, "users", table.ParentTable)
+	assert.Equal(t, "ON DELETE CASCADE", table.OnDelete)
+	assert.Equal(t, "event_date", table.RowDeletionPolicyColumn)
+	assert.Equal(t, int64(90), table.RowDeletionPolicyDays)
+}
+
+func TestGenerateDDLs_CreateTableWithInterleaveAndRowDeletionPolicy(t *testing.T) {
+	current := &Schema{
+		Tables: map[string]*Table{
+			"users": {
+				Name: "users",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey: []string{"id"},
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	desired := &Schema{
+		Tables: map[string]*Table{
+			"users": {
+				Name: "users",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+					},
+				},
+				PrimaryKey: []string{"id"},
+			},
+			"events": {
+				Name: "events",
+				Columns: map[string]*Column{
+					"id": {
+						Name:    "id",
+						Type:    "INT64",
+						NotNull: true,
+						Order:   0,
+					},
+					"event_id": {
+						Name:    "event_id",
+						Type:    "INT64",
+						NotNull: true,
+						Order:   1,
+					},
+					"event_date": {
+						Name:    "event_date",
+						Type:    "TIMESTAMP",
+						NotNull: true,
+						Order:   2,
+					},
+				},
+				PrimaryKey:  []string{"id", "event_id"},
+				ParentTable: "users",
+				OnDelete:    "ON DELETE CASCADE",
+				RowDeletionPolicyColumn: "event_date",
+				RowDeletionPolicyDays: 90,
+			},
+		},
+		Indexes: make(map[string]*Index),
+	}
+
+	ddls := GenerateDDLs(current, desired)
+	require.Len(t, ddls, 1)
+
+	expectedDDL := `CREATE TABLE events (
+  id INT64 NOT NULL,
+  event_id INT64 NOT NULL,
+  event_date TIMESTAMP NOT NULL
+) PRIMARY KEY (id, event_id),
+INTERLEAVE IN PARENT users ON DELETE CASCADE,
+ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 90 DAY))`
+
+	assert.Equal(t, expectedDDL, ddls[0])
+}

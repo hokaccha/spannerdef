@@ -3,6 +3,7 @@ package spannerdef
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cloudspannerecosystem/memefish"
@@ -17,12 +18,14 @@ type Schema struct {
 
 // Table represents a Spanner table
 type Table struct {
-	Name        string
-	Columns     map[string]*Column
-	PrimaryKey  []string
-	ParentTable string                 // empty if not interleaved
-	OnDelete    string                 // "ON DELETE CASCADE", "ON DELETE NO ACTION", or empty
-	Constraints map[string]*Constraint // Named constraints (CHECK, etc.)
+	Name                    string
+	Columns                 map[string]*Column
+	PrimaryKey              []string
+	ParentTable             string                 // empty if not interleaved
+	OnDelete                string                 // "ON DELETE CASCADE", "ON DELETE NO ACTION", or empty
+	Constraints             map[string]*Constraint // Named constraints (CHECK, etc.)
+	RowDeletionPolicyColumn string                 // column name for row deletion policy
+	RowDeletionPolicyDays   int64                  // number of days for row deletion policy
 }
 
 // Column represents a table column
@@ -187,6 +190,18 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 			table.ParentTable = cluster.TableName.Idents[len(cluster.TableName.Idents)-1].Name
 		}
 		table.OnDelete = string(cluster.OnDelete)
+	}
+
+	// Process row deletion policy
+	if stmt.RowDeletionPolicy != nil && stmt.RowDeletionPolicy.RowDeletionPolicy != nil {
+		policy := stmt.RowDeletionPolicy.RowDeletionPolicy
+		table.RowDeletionPolicyColumn = policy.ColumnName.Name
+		// Convert string value to int64
+		days, err := strconv.ParseInt(policy.NumDays.Value, policy.NumDays.Base, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse row deletion policy days: %v", err)
+		}
+		table.RowDeletionPolicyDays = days
 	}
 
 	schema.Tables[tableName] = table
@@ -489,6 +504,13 @@ func generateCreateTable(table *Table) string {
 		if table.OnDelete != "" {
 			ddl.WriteString(fmt.Sprintf(" %s", table.OnDelete))
 		}
+	}
+
+	// Add row deletion policy if present
+	if table.RowDeletionPolicyColumn != "" && table.RowDeletionPolicyDays > 0 {
+		ddl.WriteString(",\n")
+		ddl.WriteString(fmt.Sprintf("ROW DELETION POLICY (OLDER_THAN(%s, INTERVAL %d DAY))",
+			table.RowDeletionPolicyColumn, table.RowDeletionPolicyDays))
 	}
 
 	return ddl.String()
