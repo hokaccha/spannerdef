@@ -419,7 +419,11 @@ func generateCreateTable(table *Table) string {
 		columns = append(columns, columnInfo{name: name, order: col.Order})
 	}
 	sort.Slice(columns, func(i, j int) bool {
-		return columns[i].order < columns[j].order
+		if columns[i].order != columns[j].order {
+			return columns[i].order < columns[j].order
+		}
+		// If order is the same, sort by name for stable output
+		return columns[i].name < columns[j].name
 	})
 
 	var columnDefs []string
