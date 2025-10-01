@@ -373,7 +373,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 		`
 
 		ddls := applySchema(t, db, schema, false)
-		
+
 		// Verify that Users table DDL comes before Posts table DDL
 		usersIndex := -1
 		postsIndex := -1
@@ -385,11 +385,11 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 				postsIndex = i
 			}
 		}
-		
+
 		if usersIndex != -1 && postsIndex != -1 {
 			assert.Less(t, usersIndex, postsIndex, "Users table should be created before Posts table")
 		}
-		
+
 		assertDDLContains(t, ddls, "CREATE TABLE Users")
 		assertDDLContains(t, ddls, "CREATE TABLE Posts")
 	})
@@ -419,7 +419,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 				firstPos := strings.Index(ddl, "first_column")
 				secondPos := strings.Index(ddl, "second_column")
 				fourthPos := strings.Index(ddl, "fourth_column")
-				
+
 				if thirdPos != -1 && firstPos != -1 && secondPos != -1 && fourthPos != -1 {
 					assert.Less(t, thirdPos, firstPos, "third_column should come before first_column")
 					assert.Less(t, firstPos, secondPos, "first_column should come before second_column")
@@ -445,7 +445,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 
 		ddls := applySchema(t, db, schema, false)
 		assertDDLContains(t, ddls, "CREATE TABLE Users")
-		
+
 		// Verify idempotency with default clauses
 		ddls = applySchema(t, db, schema, false)
 		assert.Empty(t, ddls, "Schema with DEFAULT clauses should be idempotent")
@@ -474,6 +474,288 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 
 		ddls := applySchema(t, db, updatedSchema, false)
 		assertDDLContains(t, ddls, "ALTER TABLE Users ALTER COLUMN Name STRING(200)")
+	})
+
+	t.Run("CheckConstraints", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		schema := `
+			CREATE TABLE Products (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Price FLOAT64,
+				Stock INT64,
+				CONSTRAINT CK_Products_Price CHECK (Price >= 0),
+				CONSTRAINT CK_Products_Stock CHECK (Stock >= 0 AND Stock <= 10000)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, schema, false)
+		assertDDLContains(t, ddls, "CREATE TABLE Products")
+		assertDDLContains(t, ddls, "CONSTRAINT CK_Products_Price CHECK (Price >= 0)")
+		assertDDLContains(t, ddls, "CONSTRAINT CK_Products_Stock CHECK (Stock >= 0 AND Stock <= 10000)")
+
+		// Verify idempotency with check constraints
+		ddls = applySchema(t, db, schema, false)
+		assert.Empty(t, ddls, "Schema with CHECK constraints should be idempotent")
+	})
+
+	t.Run("AddCheckConstraint", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Initial schema without check constraint
+		initialSchema := `
+			CREATE TABLE Products (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Price FLOAT64
+			) PRIMARY KEY (Id);
+		`
+		applySchema(t, db, initialSchema, false)
+
+		// Add check constraint
+		updatedSchema := `
+			CREATE TABLE Products (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Price FLOAT64,
+				CONSTRAINT CK_Products_Price CHECK (Price >= 0)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, updatedSchema, false)
+		assertDDLContains(t, ddls, "ADD CONSTRAINT CK_Products_Price CHECK")
+	})
+
+	t.Run("DropCheckConstraint", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Initial schema with check constraint
+		initialSchema := `
+			CREATE TABLE Products (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Price FLOAT64,
+				CONSTRAINT CK_Products_Price CHECK (Price >= 0)
+			) PRIMARY KEY (Id);
+		`
+		applySchema(t, db, initialSchema, false)
+
+		// Remove check constraint
+		updatedSchema := `
+			CREATE TABLE Products (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Price FLOAT64
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, updatedSchema, true) // Enable drop
+		assertDDLContains(t, ddls, "DROP CONSTRAINT CK_Products_Price")
+	})
+
+	t.Run("ModifyCheckConstraint", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Initial schema with check constraint
+		initialSchema := `
+			CREATE TABLE Products (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Price FLOAT64,
+				CONSTRAINT CK_Products_Price CHECK (Price >= 0)
+			) PRIMARY KEY (Id);
+		`
+		applySchema(t, db, initialSchema, false)
+
+		// Modify check constraint
+		updatedSchema := `
+			CREATE TABLE Products (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Price FLOAT64,
+				CONSTRAINT CK_Products_Price CHECK (Price >= 0 AND Price <= 1000000)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, updatedSchema, true) // Enable drop
+		// Should drop and re-add the constraint
+		assertDDLContains(t, ddls, "DROP CONSTRAINT CK_Products_Price")
+		assertDDLContains(t, ddls, "ADD CONSTRAINT CK_Products_Price CHECK")
+	})
+
+	t.Run("MultipleCheckConstraints", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		schema := `
+			CREATE TABLE Employees (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Age INT64,
+				Salary FLOAT64,
+				Department STRING(50),
+				CONSTRAINT CK_Employees_Age CHECK (Age >= 18 AND Age <= 100),
+				CONSTRAINT CK_Employees_Salary CHECK (Salary > 0),
+				CONSTRAINT CK_Employees_Department CHECK (Department IN ('Engineering', 'Sales', 'Marketing', 'HR'))
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, schema, false)
+		assertDDLContains(t, ddls, "CREATE TABLE Employees")
+		assertDDLContains(t, ddls, "CONSTRAINT CK_Employees_Age CHECK (Age >= 18 AND Age <= 100)")
+		assertDDLContains(t, ddls, "CONSTRAINT CK_Employees_Salary CHECK (Salary > 0)")
+		assertDDLContains(t, ddls, "CONSTRAINT CK_Employees_Department CHECK (Department IN (\"Engineering\", \"Sales\", \"Marketing\", \"HR\"))")
+
+		// Verify idempotency with multiple check constraints
+		ddls = applySchema(t, db, schema, false)
+		assert.Empty(t, ddls, "Schema with multiple CHECK constraints should be idempotent")
+	})
+
+	t.Run("ForeignKeyConstraints", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		schema := `
+			CREATE TABLE Customers (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				Email STRING(255)
+			) PRIMARY KEY (Id);
+
+			CREATE TABLE Orders (
+				Id INT64 NOT NULL,
+				CustomerId INT64 NOT NULL,
+				OrderDate TIMESTAMP,
+				Total FLOAT64,
+				CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES Customers (Id)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, schema, false)
+		assertDDLContains(t, ddls, "CREATE TABLE Customers")
+		assertDDLContains(t, ddls, "CREATE TABLE Orders")
+		assertDDLContains(t, ddls, "CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES Customers (Id)")
+
+		// Verify idempotency with foreign key constraints
+		ddls = applySchema(t, db, schema, false)
+		assert.Empty(t, ddls, "Schema with FOREIGN KEY constraints should be idempotent")
+	})
+
+	t.Run("AddForeignKeyConstraint", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Initial schema without foreign key
+		initialSchema := `
+			CREATE TABLE Customers (
+				Id INT64 NOT NULL,
+				Name STRING(100)
+			) PRIMARY KEY (Id);
+
+			CREATE TABLE Orders (
+				Id INT64 NOT NULL,
+				CustomerId INT64 NOT NULL,
+				OrderDate TIMESTAMP
+			) PRIMARY KEY (Id);
+		`
+		applySchema(t, db, initialSchema, false)
+
+		// Add foreign key constraint
+		updatedSchema := `
+			CREATE TABLE Customers (
+				Id INT64 NOT NULL,
+				Name STRING(100)
+			) PRIMARY KEY (Id);
+
+			CREATE TABLE Orders (
+				Id INT64 NOT NULL,
+				CustomerId INT64 NOT NULL,
+				OrderDate TIMESTAMP,
+				CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES Customers (Id)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, updatedSchema, false)
+		assertDDLContains(t, ddls, "ADD CONSTRAINT FK_Orders_Customers FOREIGN KEY")
+	})
+
+	t.Run("DropForeignKeyConstraint", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		// Initial schema with foreign key
+		initialSchema := `
+			CREATE TABLE Customers (
+				Id INT64 NOT NULL,
+				Name STRING(100)
+			) PRIMARY KEY (Id);
+
+			CREATE TABLE Orders (
+				Id INT64 NOT NULL,
+				CustomerId INT64 NOT NULL,
+				OrderDate TIMESTAMP,
+				CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES Customers (Id)
+			) PRIMARY KEY (Id);
+		`
+		applySchema(t, db, initialSchema, false)
+
+		// Remove foreign key constraint
+		updatedSchema := `
+			CREATE TABLE Customers (
+				Id INT64 NOT NULL,
+				Name STRING(100)
+			) PRIMARY KEY (Id);
+
+			CREATE TABLE Orders (
+				Id INT64 NOT NULL,
+				CustomerId INT64 NOT NULL,
+				OrderDate TIMESTAMP
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, updatedSchema, true) // Enable drop
+		assertDDLContains(t, ddls, "DROP CONSTRAINT FK_Orders_Customers")
+	})
+
+	t.Run("ForeignKeyWithMultipleColumns", func(t *testing.T) {
+		db := recreateDatabase(t, config)
+		defer db.Close()
+
+		schema := `
+			CREATE TABLE Regions (
+				Country STRING(50) NOT NULL,
+				Region STRING(50) NOT NULL,
+				Name STRING(100)
+			) PRIMARY KEY (Country, Region);
+
+			CREATE TABLE Stores (
+				Id INT64 NOT NULL,
+				Country STRING(50) NOT NULL,
+				Region STRING(50) NOT NULL,
+				StoreName STRING(100),
+				CONSTRAINT FK_Stores_Regions FOREIGN KEY (Country, Region) REFERENCES Regions (Country, Region)
+			) PRIMARY KEY (Id);
+		`
+
+		ddls := applySchema(t, db, schema, false)
+		assertDDLContains(t, ddls, "CREATE TABLE Regions")
+		assertDDLContains(t, ddls, "CREATE TABLE Stores")
+		assertDDLContains(t, ddls, "CONSTRAINT FK_Stores_Regions FOREIGN KEY (Country, Region) REFERENCES Regions (Country, Region)")
+
+		// Verify idempotency
+		ddls = applySchema(t, db, schema, false)
+		assert.Empty(t, ddls, "Schema with multi-column FOREIGN KEY should be idempotent")
+	})
+
+	// Skipping this test as Spanner doesn't support ON DELETE in FOREIGN KEY constraints
+	// within CREATE TABLE statements. ON DELETE is only supported for INTERLEAVE relationships.
+	t.Run("ForeignKeyWithOnDelete", func(t *testing.T) {
+		t.Skip("Spanner doesn't support ON DELETE in FOREIGN KEY constraints")
 	})
 }
 

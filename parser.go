@@ -20,8 +20,9 @@ type Table struct {
 	Name        string
 	Columns     map[string]*Column
 	PrimaryKey  []string
-	ParentTable string // empty if not interleaved
-	OnDelete    string // "ON DELETE CASCADE", "ON DELETE NO ACTION", or empty
+	ParentTable string                 // empty if not interleaved
+	OnDelete    string                 // "ON DELETE CASCADE", "ON DELETE NO ACTION", or empty
+	Constraints map[string]*Constraint // Named constraints (CHECK, etc.)
 }
 
 // Column represents a table column
@@ -42,6 +43,17 @@ type Index struct {
 	Unique       bool
 	NullFiltered bool
 	Storing      []string
+}
+
+// Constraint represents a table constraint
+type Constraint struct {
+	Name             string
+	Type             string   // "CHECK", "FOREIGN KEY", etc.
+	Expression       string   // For CHECK constraint
+	Columns          []string // For FOREIGN KEY constraint
+	ReferenceTable   string   // For FOREIGN KEY constraint
+	ReferenceColumns []string // For FOREIGN KEY constraint
+	OnDelete         string   // "CASCADE", "NO ACTION", or empty
 }
 
 // ParseDDLs parses DDL statements and returns a Schema
@@ -88,8 +100,9 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	tableName := getPathName(stmt.Name)
 
 	table := &Table{
-		Name:    tableName,
-		Columns: make(map[string]*Column),
+		Name:        tableName,
+		Columns:     make(map[string]*Column),
+		Constraints: make(map[string]*Constraint),
 	}
 
 	// Process columns
@@ -118,6 +131,53 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	// Process primary key
 	for _, key := range stmt.PrimaryKeys {
 		table.PrimaryKey = append(table.PrimaryKey, key.Name.Name)
+	}
+
+	// Process table constraints
+	for _, tc := range stmt.TableConstraints {
+		constraintName := ""
+		if tc.Name != nil {
+			constraintName = tc.Name.Name
+		}
+
+		switch c := tc.Constraint.(type) {
+		case *ast.Check:
+			if constraintName == "" {
+				// Generate a name if not specified
+				constraintName = fmt.Sprintf("CK_%s_%d", tableName, len(table.Constraints))
+			}
+			table.Constraints[constraintName] = &Constraint{
+				Name:       constraintName,
+				Type:       "CHECK",
+				Expression: "(" + c.Expr.SQL() + ")",
+			}
+		case *ast.ForeignKey:
+			if constraintName == "" {
+				// Generate a name if not specified
+				constraintName = fmt.Sprintf("FK_%s_%d", tableName, len(table.Constraints))
+			}
+
+			// Extract column names
+			var columns []string
+			for _, col := range c.Columns {
+				columns = append(columns, col.Name)
+			}
+
+			// Extract reference columns
+			var refColumns []string
+			for _, col := range c.ReferenceColumns {
+				refColumns = append(refColumns, col.Name)
+			}
+
+			table.Constraints[constraintName] = &Constraint{
+				Name:             constraintName,
+				Type:             "FOREIGN KEY",
+				Columns:          columns,
+				ReferenceTable:   getPathName(c.ReferenceTable),
+				ReferenceColumns: refColumns,
+				OnDelete:         string(c.OnDelete),
+			}
+		}
 	}
 
 	// Process interleave information
@@ -284,39 +344,49 @@ func generateCreateTableDDLs(current, desired *Schema) []string {
 }
 
 // sortTablesByDependency sorts tables to ensure parent tables come before child tables
+// and referenced tables come before tables with foreign keys
 func sortTablesByDependency(tables []*Table) []*Table {
 	var result []*Table
 	processed := make(map[string]bool)
-	
+
 	// Create a map for quick lookup
 	tableMap := make(map[string]*Table)
 	for _, table := range tables {
 		tableMap[table.Name] = table
 	}
-	
+
 	var processTable func(table *Table)
 	processTable = func(table *Table) {
 		if processed[table.Name] {
 			return
 		}
-		
+
 		// If this table has a parent, process the parent first
 		if table.ParentTable != "" {
 			if parentTable, exists := tableMap[table.ParentTable]; exists {
 				processTable(parentTable)
 			}
 		}
-		
+
+		// If this table has foreign key constraints, process referenced tables first
+		for _, constraint := range table.Constraints {
+			if constraint.Type == "FOREIGN KEY" {
+				if referencedTable, exists := tableMap[constraint.ReferenceTable]; exists {
+					processTable(referencedTable)
+				}
+			}
+		}
+
 		// Process this table
 		result = append(result, table)
 		processed[table.Name] = true
 	}
-	
+
 	// Process all tables
 	for _, table := range tables {
 		processTable(table)
 	}
-	
+
 	return result
 }
 
@@ -366,6 +436,40 @@ func generateCreateTable(table *Table) string {
 	}
 
 	ddl.WriteString(strings.Join(columnDefs, ",\n"))
+
+	// Add constraints
+	if len(table.Constraints) > 0 {
+		// Sort constraints by name for consistent output
+		var constraintNames []string
+		for name := range table.Constraints {
+			constraintNames = append(constraintNames, name)
+		}
+		sort.Strings(constraintNames)
+
+		for _, name := range constraintNames {
+			constraint := table.Constraints[name]
+			if constraint.Type == "CHECK" {
+				ddl.WriteString(",\n  CONSTRAINT ")
+				ddl.WriteString(name)
+				ddl.WriteString(" CHECK ")
+				ddl.WriteString(constraint.Expression)
+			} else if constraint.Type == "FOREIGN KEY" {
+				ddl.WriteString(",\n  CONSTRAINT ")
+				ddl.WriteString(name)
+				ddl.WriteString(" FOREIGN KEY (")
+				ddl.WriteString(strings.Join(constraint.Columns, ", "))
+				ddl.WriteString(") REFERENCES ")
+				ddl.WriteString(constraint.ReferenceTable)
+				ddl.WriteString(" (")
+				ddl.WriteString(strings.Join(constraint.ReferenceColumns, ", "))
+				ddl.WriteString(")")
+				if constraint.OnDelete != "" {
+					ddl.WriteString(" ")
+					ddl.WriteString(constraint.OnDelete)
+				}
+			}
+		}
+	}
 
 	// Add primary key
 	if len(table.PrimaryKey) > 0 {
@@ -441,6 +545,66 @@ func generateAlterTable(current, desired *Table) []string {
 					def += " NOT NULL"
 				}
 				ddls = append(ddls, def)
+			}
+		}
+	}
+
+	// Handle constraints
+	// Drop constraints that no longer exist or have changed
+	for constraintName, currentConstraint := range current.Constraints {
+		desiredConstraint, exists := desired.Constraints[constraintName]
+		needsDrop := !exists
+
+		if exists {
+			// Check if constraint needs to be dropped and recreated
+			if currentConstraint.Type == "CHECK" && currentConstraint.Expression != desiredConstraint.Expression {
+				needsDrop = true
+			} else if currentConstraint.Type == "FOREIGN KEY" &&
+				(strings.Join(currentConstraint.Columns, ",") != strings.Join(desiredConstraint.Columns, ",") ||
+					currentConstraint.ReferenceTable != desiredConstraint.ReferenceTable ||
+					strings.Join(currentConstraint.ReferenceColumns, ",") != strings.Join(desiredConstraint.ReferenceColumns, ",") ||
+					currentConstraint.OnDelete != desiredConstraint.OnDelete) {
+				needsDrop = true
+			}
+		}
+
+		if needsDrop {
+			ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", desired.Name, constraintName))
+		}
+	}
+
+	// Add new constraints or re-add modified ones
+	for constraintName, desiredConstraint := range desired.Constraints {
+		currentConstraint, exists := current.Constraints[constraintName]
+		needsRecreate := false
+
+		if exists {
+			// Check if constraint needs to be recreated
+			if desiredConstraint.Type == "CHECK" && currentConstraint.Expression != desiredConstraint.Expression {
+				needsRecreate = true
+			} else if desiredConstraint.Type == "FOREIGN KEY" &&
+				(strings.Join(currentConstraint.Columns, ",") != strings.Join(desiredConstraint.Columns, ",") ||
+					currentConstraint.ReferenceTable != desiredConstraint.ReferenceTable ||
+					strings.Join(currentConstraint.ReferenceColumns, ",") != strings.Join(desiredConstraint.ReferenceColumns, ",") ||
+					currentConstraint.OnDelete != desiredConstraint.OnDelete) {
+				needsRecreate = true
+			}
+		}
+
+		if !exists || needsRecreate {
+			if desiredConstraint.Type == "CHECK" {
+				ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK %s",
+					desired.Name, constraintName, desiredConstraint.Expression))
+			} else if desiredConstraint.Type == "FOREIGN KEY" {
+				ddl := fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+					desired.Name, constraintName,
+					strings.Join(desiredConstraint.Columns, ", "),
+					desiredConstraint.ReferenceTable,
+					strings.Join(desiredConstraint.ReferenceColumns, ", "))
+				if desiredConstraint.OnDelete != "" {
+					ddl += " " + desiredConstraint.OnDelete
+				}
+				ddls = append(ddls, ddl)
 			}
 		}
 	}
