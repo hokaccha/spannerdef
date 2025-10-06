@@ -554,27 +554,6 @@ func generateAlterTable(current, desired *Table) []string {
 		}
 	}
 
-	// Drop columns that no longer exist
-	for colName := range current.Columns {
-		if _, exists := desired.Columns[colName]; !exists {
-			ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", desired.Name, colName))
-		}
-	}
-
-	// Handle column type changes
-	for colName, desiredCol := range desired.Columns {
-		if currentCol, exists := current.Columns[colName]; exists {
-			// Check if column type has changed
-			if currentCol.Type != desiredCol.Type {
-				def := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s", desired.Name, colName, desiredCol.Type)
-				if desiredCol.NotNull {
-					def += " NOT NULL"
-				}
-				ddls = append(ddls, def)
-			}
-		}
-	}
-
 	// Handle constraints
 	// Drop constraints that no longer exist or have changed
 	for constraintName, currentConstraint := range current.Constraints {
@@ -596,6 +575,27 @@ func generateAlterTable(current, desired *Table) []string {
 
 		if needsDrop {
 			ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", desired.Name, constraintName))
+		}
+	}
+
+	// Drop columns that no longer exist
+	for colName := range current.Columns {
+		if _, exists := desired.Columns[colName]; !exists {
+			ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", desired.Name, colName))
+		}
+	}
+
+	// Handle column type changes
+	for colName, desiredCol := range desired.Columns {
+		if currentCol, exists := current.Columns[colName]; exists {
+			// Check if column type has changed
+			if currentCol.Type != desiredCol.Type {
+				def := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s", desired.Name, colName, desiredCol.Type)
+				if desiredCol.NotNull {
+					def += " NOT NULL"
+				}
+				ddls = append(ddls, def)
+			}
 		}
 	}
 
