@@ -2,6 +2,7 @@ package spannerdef
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,8 +125,9 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 			}
 		}
 
-		if col.PrimaryKey {
-			column.Options = "PRIMARY KEY"
+		// Extract OPTIONS clause if present
+		if col.Options != nil {
+			column.Options = col.Options.SQL()
 		}
 
 		table.Columns[column.Name] = column
@@ -451,6 +453,9 @@ func generateCreateTable(table *Table) string {
 		if col.Default != "" {
 			def += " DEFAULT " + col.Default
 		}
+		if col.Options != "" {
+			def += " " + col.Options
+		}
 		columnDefs = append(columnDefs, def)
 	}
 
@@ -550,6 +555,9 @@ func generateAlterTable(current, desired *Table) []string {
 			if col.Default != "" {
 				def += " DEFAULT " + col.Default
 			}
+			if col.Options != "" {
+				def += " " + col.Options
+			}
 			ddls = append(ddls, def)
 		}
 	}
@@ -585,7 +593,7 @@ func generateAlterTable(current, desired *Table) []string {
 		}
 	}
 
-	// Handle column type changes
+	// Handle column type changes and OPTIONS changes
 	for colName, desiredCol := range desired.Columns {
 		if currentCol, exists := current.Columns[colName]; exists {
 			// Check if column type has changed
@@ -595,6 +603,18 @@ func generateAlterTable(current, desired *Table) []string {
 					def += " NOT NULL"
 				}
 				ddls = append(ddls, def)
+			}
+
+			// Handle OPTIONS changes independently from type changes
+			if currentCol.Options != desiredCol.Options {
+				if desiredCol.Options != "" {
+					ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET %s",
+						desired.Name, colName, desiredCol.Options))
+				} else {
+					// Remove OPTIONS by setting each key to null
+					ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET %s",
+						desired.Name, colName, nullifyOptions(currentCol.Options)))
+				}
 			}
 		}
 	}
@@ -636,4 +656,14 @@ func generateAlterTable(current, desired *Table) []string {
 	}
 
 	return ddls
+}
+
+// optionKeyValueRe matches "key = value" pairs in OPTIONS clause,
+// handling quoted string values that may contain commas or parentheses.
+var optionKeyValueRe = regexp.MustCompile(`(\w+)\s*=\s*(?:"[^"]*"|[^,)]+)`)
+
+// nullifyOptions takes an OPTIONS SQL string like "OPTIONS (key1 = value1, key2 = value2)"
+// and returns "OPTIONS (key1 = null, key2 = null)" for removing options.
+func nullifyOptions(optionsSQL string) string {
+	return optionKeyValueRe.ReplaceAllString(optionsSQL, "${1} = null")
 }
