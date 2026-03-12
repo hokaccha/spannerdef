@@ -575,6 +575,343 @@ func TestParseDDLs_ColumnOrder(t *testing.T) {
 	assert.Equal(t, expectedDDL, ddls[0])
 }
 
+func TestParseDDLs_ColumnOptions(t *testing.T) {
+	t.Run("AllowCommitTimestamp", func(t *testing.T) {
+		ddl := `
+			CREATE TABLE Events (
+				Id INT64 NOT NULL,
+				Name STRING(100),
+				CreatedAt TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true)
+			) PRIMARY KEY (Id)
+		`
+
+		schema, err := ParseDDLs(ddl)
+		require.NoError(t, err)
+
+		table := schema.Tables["Events"]
+		require.NotNil(t, table)
+
+		createdAtCol := table.Columns["CreatedAt"]
+		assert.Equal(t, "TIMESTAMP", createdAtCol.Type)
+		assert.True(t, createdAtCol.NotNull)
+		assert.Equal(t, "OPTIONS (allow_commit_timestamp = true)", createdAtCol.Options)
+
+		// Column without OPTIONS
+		nameCol := table.Columns["Name"]
+		assert.Empty(t, nameCol.Options)
+	})
+
+	t.Run("LocalityGroup", func(t *testing.T) {
+		ddl := `
+			CREATE TABLE Singers (
+				SingerId INT64 NOT NULL,
+				Awards ARRAY<STRING(MAX)> OPTIONS (locality_group = "spill_to_hdd")
+			) PRIMARY KEY (SingerId)
+		`
+
+		schema, err := ParseDDLs(ddl)
+		require.NoError(t, err)
+
+		col := schema.Tables["Singers"].Columns["Awards"]
+		assert.Equal(t, `OPTIONS (locality_group = "spill_to_hdd")`, col.Options)
+	})
+
+}
+
+func TestGenerateDDLs_CreateTableWithOptions(t *testing.T) {
+	t.Run("AllowCommitTimestamp", func(t *testing.T) {
+		current := &Schema{
+			Tables:  make(map[string]*Table),
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Events": {
+					Name: "Events",
+					Columns: map[string]*Column{
+						"Id": {
+							Name:    "Id",
+							Type:    "INT64",
+							NotNull: true,
+							Order:   0,
+						},
+						"CreatedAt": {
+							Name:    "CreatedAt",
+							Type:    "TIMESTAMP",
+							NotNull: true,
+							Options: "OPTIONS (allow_commit_timestamp = true)",
+							Order:   1,
+						},
+					},
+					PrimaryKey: []string{"Id"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+
+		expectedDDL := `CREATE TABLE Events (
+  Id INT64 NOT NULL,
+  CreatedAt TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true)
+) PRIMARY KEY (Id)`
+
+		assert.Equal(t, expectedDDL, ddls[0])
+	})
+
+	t.Run("LocalityGroup", func(t *testing.T) {
+		current := &Schema{
+			Tables:  make(map[string]*Table),
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Singers": {
+					Name: "Singers",
+					Columns: map[string]*Column{
+						"SingerId": {
+							Name:    "SingerId",
+							Type:    "INT64",
+							NotNull: true,
+							Order:   0,
+						},
+						"Awards": {
+							Name:    "Awards",
+							Type:    "ARRAY<STRING(MAX)>",
+							Options: `OPTIONS (locality_group = "spill_to_hdd")`,
+							Order:   1,
+						},
+					},
+					PrimaryKey: []string{"SingerId"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+
+		expectedDDL := `CREATE TABLE Singers (
+  SingerId INT64 NOT NULL,
+  Awards ARRAY<STRING(MAX)> OPTIONS (locality_group = "spill_to_hdd")
+) PRIMARY KEY (SingerId)`
+
+		assert.Equal(t, expectedDDL, ddls[0])
+	})
+
+}
+
+func TestGenerateDDLs_AddColumnWithOptions(t *testing.T) {
+	t.Run("AllowCommitTimestamp", func(t *testing.T) {
+		current := &Schema{
+			Tables: map[string]*Table{
+				"Events": {
+					Name: "Events",
+					Columns: map[string]*Column{
+						"Id": {Name: "Id", Type: "INT64", NotNull: true},
+					},
+					PrimaryKey: []string{"Id"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Events": {
+					Name: "Events",
+					Columns: map[string]*Column{
+						"Id":        {Name: "Id", Type: "INT64", NotNull: true},
+						"CreatedAt": {Name: "CreatedAt", Type: "TIMESTAMP", Options: "OPTIONS (allow_commit_timestamp = true)"},
+					},
+					PrimaryKey: []string{"Id"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+		assert.Equal(t, "ALTER TABLE Events ADD COLUMN CreatedAt TIMESTAMP OPTIONS (allow_commit_timestamp = true)", ddls[0])
+	})
+
+	t.Run("LocalityGroup", func(t *testing.T) {
+		current := &Schema{
+			Tables: map[string]*Table{
+				"Singers": {
+					Name: "Singers",
+					Columns: map[string]*Column{
+						"SingerId": {Name: "SingerId", Type: "INT64", NotNull: true},
+					},
+					PrimaryKey: []string{"SingerId"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Singers": {
+					Name: "Singers",
+					Columns: map[string]*Column{
+						"SingerId": {Name: "SingerId", Type: "INT64", NotNull: true},
+						"Awards":   {Name: "Awards", Type: "ARRAY<STRING(MAX)>", Options: `OPTIONS (locality_group = "spill_to_hdd")`},
+					},
+					PrimaryKey: []string{"SingerId"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+		assert.Equal(t, `ALTER TABLE Singers ADD COLUMN Awards ARRAY<STRING(MAX)> OPTIONS (locality_group = "spill_to_hdd")`, ddls[0])
+	})
+}
+
+func TestGenerateDDLs_AlterColumnSetOptions(t *testing.T) {
+	t.Run("AllowCommitTimestamp", func(t *testing.T) {
+		current := &Schema{
+			Tables: map[string]*Table{
+				"Events": {
+					Name: "Events",
+					Columns: map[string]*Column{
+						"Id":        {Name: "Id", Type: "INT64", NotNull: true},
+						"CreatedAt": {Name: "CreatedAt", Type: "TIMESTAMP", NotNull: true},
+					},
+					PrimaryKey: []string{"Id"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Events": {
+					Name: "Events",
+					Columns: map[string]*Column{
+						"Id":        {Name: "Id", Type: "INT64", NotNull: true},
+						"CreatedAt": {Name: "CreatedAt", Type: "TIMESTAMP", NotNull: true, Options: "OPTIONS (allow_commit_timestamp = true)"},
+					},
+					PrimaryKey: []string{"Id"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+		assert.Equal(t, "ALTER TABLE Events ALTER COLUMN CreatedAt SET OPTIONS (allow_commit_timestamp = true)", ddls[0])
+	})
+
+	t.Run("LocalityGroup", func(t *testing.T) {
+		current := &Schema{
+			Tables: map[string]*Table{
+				"Singers": {
+					Name: "Singers",
+					Columns: map[string]*Column{
+						"SingerId": {Name: "SingerId", Type: "INT64", NotNull: true},
+						"Awards":   {Name: "Awards", Type: "ARRAY<STRING(MAX)>"},
+					},
+					PrimaryKey: []string{"SingerId"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Singers": {
+					Name: "Singers",
+					Columns: map[string]*Column{
+						"SingerId": {Name: "SingerId", Type: "INT64", NotNull: true},
+						"Awards":   {Name: "Awards", Type: "ARRAY<STRING(MAX)>", Options: `OPTIONS (locality_group = "spill_to_hdd")`},
+					},
+					PrimaryKey: []string{"SingerId"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+		assert.Equal(t, `ALTER TABLE Singers ALTER COLUMN Awards SET OPTIONS (locality_group = "spill_to_hdd")`, ddls[0])
+	})
+}
+
+func TestGenerateDDLs_AlterColumnRemoveOptions(t *testing.T) {
+	t.Run("AllowCommitTimestamp", func(t *testing.T) {
+		current := &Schema{
+			Tables: map[string]*Table{
+				"Events": {
+					Name: "Events",
+					Columns: map[string]*Column{
+						"Id":        {Name: "Id", Type: "INT64", NotNull: true},
+						"CreatedAt": {Name: "CreatedAt", Type: "TIMESTAMP", NotNull: true, Options: "OPTIONS (allow_commit_timestamp = true)"},
+					},
+					PrimaryKey: []string{"Id"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Events": {
+					Name: "Events",
+					Columns: map[string]*Column{
+						"Id":        {Name: "Id", Type: "INT64", NotNull: true},
+						"CreatedAt": {Name: "CreatedAt", Type: "TIMESTAMP", NotNull: true},
+					},
+					PrimaryKey: []string{"Id"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+		assert.Equal(t, "ALTER TABLE Events ALTER COLUMN CreatedAt SET OPTIONS (allow_commit_timestamp = null)", ddls[0])
+	})
+
+	t.Run("LocalityGroup", func(t *testing.T) {
+		current := &Schema{
+			Tables: map[string]*Table{
+				"Singers": {
+					Name: "Singers",
+					Columns: map[string]*Column{
+						"SingerId": {Name: "SingerId", Type: "INT64", NotNull: true},
+						"Awards":   {Name: "Awards", Type: "ARRAY<STRING(MAX)>", Options: `OPTIONS (locality_group = "spill_to_hdd")`},
+					},
+					PrimaryKey: []string{"SingerId"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		desired := &Schema{
+			Tables: map[string]*Table{
+				"Singers": {
+					Name: "Singers",
+					Columns: map[string]*Column{
+						"SingerId": {Name: "SingerId", Type: "INT64", NotNull: true},
+						"Awards":   {Name: "Awards", Type: "ARRAY<STRING(MAX)>"},
+					},
+					PrimaryKey: []string{"SingerId"},
+				},
+			},
+			Indexes: make(map[string]*Index),
+		}
+
+		ddls := GenerateDDLs(current, desired)
+		require.Len(t, ddls, 1)
+		assert.Equal(t, `ALTER TABLE Singers ALTER COLUMN Awards SET OPTIONS (locality_group = null)`, ddls[0])
+	})
+}
+
 func TestParseDDLs_RowDeletionPolicy(t *testing.T) {
 	ddl := `
 		CREATE TABLE events (
