@@ -98,6 +98,43 @@ spannerdef uses Google Cloud authentication. Make sure you have:
 2. `gcloud auth application-default login` configured, or
 3. Running on Google Cloud with appropriate service account
 
+## Running against Spanner Emulator / Spanner Omni
+
+spannerdef works against both the [Spanner Emulator](https://cloud.google.com/spanner/docs/emulator) and [Spanner Omni](https://cloud.google.com/spanner-omni/docs) without any code changes — just point the Google Cloud Go SDK at a local endpoint via `SPANNER_EMULATOR_HOST`.
+
+### Spanner Emulator
+
+```bash
+docker run -d --name spanner-emulator \
+  -p 9010:9010 -p 9020:9020 \
+  gcr.io/cloud-spanner-emulator/emulator
+
+export SPANNER_EMULATOR_HOST=localhost:9010
+spannerdef --project=my-project --instance=my-instance --database=my-db < schema.sql
+```
+
+Any project/instance/database IDs are accepted; you typically create them via `gcloud spanner instances create ...` first.
+
+### Spanner Omni (pre-GA)
+
+Spanner Omni runs the actual Spanner binary locally. In single-server mode it exposes a gRPC endpoint on port `15000` with `project=default` and `instance=default` hardcoded.
+
+```bash
+docker run -d --network host \
+  --name spanneromni \
+  -v spanner:/spanner \
+  us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r1-beta \
+  start-single-server
+
+# Create a database first
+docker exec spanneromni /google/spanner/bin/spanner databases create my-db
+
+export SPANNER_EMULATOR_HOST=localhost:15000
+spannerdef --project=default --instance=default --database=my-db < schema.sql
+```
+
+Note: Spanner Omni is pre-GA and licensed for development, testing, prototyping, and demonstration only.
+
 ## Development
 
 ### Build
