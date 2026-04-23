@@ -21,6 +21,12 @@ Idempotent Google Cloud Spanner schema management by SQL, inspired by [sqldef](h
 go install github.com/hokaccha/spannerdef/cmd/spannerdef@latest
 ```
 
+Or install with [mise](https://mise.jdx.dev/):
+
+```bash
+mise use -g github:hokaccha/spannerdef@latest
+```
+
 ## Usage
 
 ```bash
