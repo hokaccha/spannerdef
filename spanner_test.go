@@ -9,45 +9,34 @@ import (
 	"time"
 
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
-	instanceadmin "cloud.google.com/go/spanner/admin/instance/apiv1"
-	"cloud.google.com/go/spanner/admin/instance/apiv1/instancepb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// getTestConfig returns the test database configuration for Spanner emulator
+// getTestConfig returns the base Config used by every integration test.
+// SPANNER_EMULATOR_HOST must point at a Spanner Omni gRPC endpoint; each
+// individual test creates its own database via newTestDatabase.
 func getTestConfig(t *testing.T) Config {
 	t.Helper()
 
-	// Check if running against Spanner emulator
-	emulatorHost := getEnvOrDefault("SPANNER_EMULATOR_HOST", "localhost:9010")
-
-	// Verify emulator is actually running by checking if host is reachable
-	if !isEmulatorRunning(emulatorHost) {
-		t.Skip("Spanner emulator tests require emulator. Please start it with: docker-compose up -d")
+	host := os.Getenv("SPANNER_EMULATOR_HOST")
+	if host == "" {
+		t.Skip("SPANNER_EMULATOR_HOST not set; run `make omni-up && make test`")
 	}
 
-	// Set up environment variables for emulator
-	setupEmulatorEnvironment(emulatorHost)
-
-	// Default values for emulator
-	projectID := getEnvOrDefault("SPANNER_PROJECT_ID", "test-project")
-	instanceID := getEnvOrDefault("SPANNER_INSTANCE_ID", "test-instance")
-	databaseID := getEnvOrDefault("SPANNER_DATABASE_ID", "test-database")
-
-	// Ensure instance and database exist
-	ensureInstanceAndDatabase(t, projectID, instanceID, databaseID)
+	if !isOmniRunning(host) {
+		t.Skip("Spanner Omni not reachable at " + host + "; run `make omni-up`")
+	}
 
 	return Config{
-		ProjectID:  projectID,
-		InstanceID: instanceID,
-		DatabaseID: databaseID,
+		ProjectID:  getEnvOrDefault("SPANNER_PROJECT_ID", "default"),
+		InstanceID: getEnvOrDefault("SPANNER_INSTANCE_ID", "default"),
+		DatabaseID: getEnvOrDefault("SPANNER_DATABASE_ID", "testdb"),
 	}
 }
 
-// getEnvOrDefault returns the environment variable value or a default value
 func getEnvOrDefault(envVar, defaultValue string) string {
 	if value := os.Getenv(envVar); value != "" {
 		return value
@@ -55,114 +44,13 @@ func getEnvOrDefault(envVar, defaultValue string) string {
 	return defaultValue
 }
 
-// isEmulatorRunning checks if Spanner emulator is running on the given host
-func isEmulatorRunning(host string) bool {
+func isOmniRunning(host string) bool {
 	conn, err := net.DialTimeout("tcp", host, 1*time.Second)
 	if err != nil {
 		return false
 	}
 	conn.Close()
 	return true
-}
-
-// setupEmulatorEnvironment sets up environment variables for emulator
-func setupEmulatorEnvironment(emulatorHost string) {
-	// Set SPANNER_EMULATOR_HOST if not already set
-	if os.Getenv("SPANNER_EMULATOR_HOST") == "" {
-		os.Setenv("SPANNER_EMULATOR_HOST", emulatorHost)
-	}
-
-	// Set other emulator-related environment variables
-	if os.Getenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER") == "" {
-		os.Setenv("CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER", "http://localhost:9020/")
-	}
-	if os.Getenv("SPANNER_EMULATOR_HOST_REST") == "" {
-		os.Setenv("SPANNER_EMULATOR_HOST_REST", "localhost:9020")
-	}
-	if os.Getenv("CLOUDSDK_CORE_PROJECT") == "" {
-		os.Setenv("CLOUDSDK_CORE_PROJECT", "test-project")
-	}
-	if os.Getenv("CLOUDSDK_AUTH_DISABLE_CREDENTIALS") == "" {
-		os.Setenv("CLOUDSDK_AUTH_DISABLE_CREDENTIALS", "true")
-	}
-}
-
-// ensureInstanceAndDatabase creates instance and database if they don't exist
-func ensureInstanceAndDatabase(t *testing.T, projectID, instanceID, databaseID string) {
-	t.Helper()
-
-	ctx := context.Background()
-
-	// Create instance if it doesn't exist
-	if !instanceExists(t, ctx, projectID, instanceID) {
-		createInstance(t, ctx, projectID, instanceID)
-	}
-
-	// Create database if it doesn't exist
-	if !databaseExists(t, ctx, projectID, instanceID, databaseID) {
-		createDatabase(t, ctx, projectID, instanceID, databaseID)
-	}
-}
-
-// Test-only helper functions for instance management
-func createInstanceAdminClient(ctx context.Context) (*instanceadmin.InstanceAdminClient, error) {
-	return instanceadmin.NewInstanceAdminClient(ctx)
-}
-
-// Helper functions for instance and database management (test-only)
-func instanceExists(t *testing.T, ctx context.Context, projectID, instanceID string) bool {
-	t.Helper()
-
-	instanceAdminClient, err := createInstanceAdminClient(ctx)
-	if err != nil {
-		t.Logf("Failed to create instance admin client: %v", err)
-		return false
-	}
-	defer instanceAdminClient.Close()
-
-	instancePath := "projects/" + projectID + "/instances/" + instanceID
-	_, err = instanceAdminClient.GetInstance(ctx, &instancepb.GetInstanceRequest{
-		Name: instancePath,
-	})
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			t.Logf("Instance %s does not exist", instanceID)
-			return false
-		}
-		t.Logf("Error checking instance existence: %v", err)
-		return false
-	}
-	t.Logf("Instance %s exists", instanceID)
-	return true
-}
-
-func createInstance(t *testing.T, ctx context.Context, projectID, instanceID string) {
-	t.Helper()
-
-	t.Logf("Creating Spanner instance: %s", instanceID)
-
-	instanceAdminClient, err := createInstanceAdminClient(ctx)
-	require.NoError(t, err)
-	defer instanceAdminClient.Close()
-
-	instancePath := "projects/" + projectID + "/instances/" + instanceID
-	parentPath := "projects/" + projectID
-
-	op, err := instanceAdminClient.CreateInstance(ctx, &instancepb.CreateInstanceRequest{
-		Parent:     parentPath,
-		InstanceId: instanceID,
-		Instance: &instancepb.Instance{
-			Name:        instancePath,
-			Config:      "projects/" + projectID + "/instanceConfigs/emulator-config",
-			DisplayName: "Test instance for integration tests",
-			NodeCount:   1,
-		},
-	})
-	require.NoError(t, err)
-	_, err = op.Wait(ctx)
-	require.NoError(t, err)
-
-	t.Logf("Instance %s created successfully", instanceID)
 }
 
 func databaseExists(t *testing.T, ctx context.Context, projectID, instanceID, databaseID string) bool {
@@ -174,7 +62,6 @@ func databaseExists(t *testing.T, ctx context.Context, projectID, instanceID, da
 		DatabaseID: databaseID,
 	})
 	if err != nil {
-		t.Logf("Failed to create admin client: %v", err)
 		return false
 	}
 	defer adminDB.Close()
@@ -185,107 +72,65 @@ func databaseExists(t *testing.T, ctx context.Context, projectID, instanceID, da
 	})
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			t.Logf("Database %s does not exist", databaseID)
 			return false
 		}
-		t.Logf("Error checking database existence: %v", err)
 		return false
 	}
-	t.Logf("Database %s exists", databaseID)
 	return true
 }
 
-func createDatabase(t *testing.T, ctx context.Context, projectID, instanceID, databaseID string) {
-	t.Helper()
-
-	t.Logf("Creating Spanner database: %s", databaseID)
-
-	adminDB, err := NewAdminDatabase(Config{
-		ProjectID:  projectID,
-		InstanceID: instanceID,
-		DatabaseID: databaseID,
-	})
-	require.NoError(t, err)
-	defer adminDB.Close()
-
-	instancePath := "projects/" + projectID + "/instances/" + instanceID
-	createStatement := "CREATE DATABASE `" + databaseID + "`"
-
-	op, err := adminDB.DatabaseAdminClient().CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{
-		Parent:          instancePath,
-		CreateStatement: createStatement,
-	})
-	require.NoError(t, err)
-	_, err = op.Wait(ctx)
-	require.NoError(t, err)
-
-	t.Logf("Database %s created successfully", databaseID)
-}
-
 func TestNewDatabase(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
-	db, err := NewDatabase(config)
-	require.NoError(t, err)
+	db, _ := newTestDatabase(t, config)
 	assert.NotNil(t, db)
 	assert.Equal(t, config.ProjectID, db.projectID)
 	assert.Equal(t, config.InstanceID, db.instanceID)
-	assert.Equal(t, config.DatabaseID, db.databaseID)
-
-	err = db.Close()
-	assert.NoError(t, err)
 }
 
 func TestSpannerDatabase_DumpDDLs(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
-	db, err := NewDatabase(config)
-	require.NoError(t, err)
-	defer db.Close()
+	db, _ := newTestDatabase(t, config)
 
-	// Test dumping empty database
 	ddls, err := db.DumpDDLs()
 	require.NoError(t, err)
-	// Empty database should return empty string or just semicolon
+	// Empty database returns either "" or ";".
 	trimmed := strings.TrimSpace(strings.Trim(ddls, ";"))
 	assert.Empty(t, trimmed)
 }
 
 func TestSpannerDatabase_ExecDDL(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
-	db, err := NewDatabase(config)
-	require.NoError(t, err)
-	defer db.Close()
+	db, _ := newTestDatabase(t, config)
 
-	// Create a test table
 	ddl := `CREATE TABLE TestTable (
 		Id INT64 NOT NULL,
 		Name STRING(100)
 	) PRIMARY KEY (Id)`
 
-	err = db.ExecDDL(ddl)
+	err := db.ExecDDL(ddl)
 	require.NoError(t, err)
 
-	// Verify table was created
 	ddls, err := db.DumpDDLs()
 	require.NoError(t, err)
 	assert.Contains(t, ddls, "TestTable")
 	assert.Contains(t, ddls, "STRING(100)")
 
-	// Clean up
 	err = db.ExecDDL("DROP TABLE TestTable")
 	require.NoError(t, err)
 }
 
 func TestSpannerDatabase_ExecDDLs(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
-	db, err := NewDatabase(config)
-	require.NoError(t, err)
-	defer db.Close()
+	db, _ := newTestDatabase(t, config)
 
-	// Create multiple DDLs
 	ddls := []string{
 		`CREATE TABLE Users (
 			Id INT64 NOT NULL,
@@ -297,25 +142,17 @@ func TestSpannerDatabase_ExecDDLs(t *testing.T) {
 		) PRIMARY KEY (Id)`,
 	}
 
-	err = db.ExecDDLs(ddls)
+	err := db.ExecDDLs(ddls)
 	require.NoError(t, err)
 
-	// Verify tables were created
 	resultDDLs, err := db.DumpDDLs()
 	require.NoError(t, err)
 	assert.Contains(t, resultDDLs, "Users")
 	assert.Contains(t, resultDDLs, "Posts")
-
-	// Clean up
-	cleanupDDLs := []string{
-		"DROP TABLE Users",
-		"DROP TABLE Posts",
-	}
-	err = db.ExecDDLs(cleanupDDLs)
-	require.NoError(t, err)
 }
 
 func TestNewAdminDatabase(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
 	adminDB, err := NewAdminDatabase(config)
@@ -325,18 +162,15 @@ func TestNewAdminDatabase(t *testing.T) {
 	assert.Equal(t, config.InstanceID, adminDB.instanceID)
 	assert.Equal(t, config.DatabaseID, adminDB.databaseID)
 
-	// Test that admin database was created successfully
-	assert.NotNil(t, adminDB)
-
 	err = adminDB.Close()
 	assert.NoError(t, err)
 }
 
 func TestSpannerAdminDatabase_DatabaseLifecycle(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
-	// Use a unique database name for this test
-	config.DatabaseID = "test-lifecycle-db"
+	config.DatabaseID = uniqueDatabaseID()
 
 	adminDB, err := NewAdminDatabase(config)
 	require.NoError(t, err)
@@ -344,56 +178,34 @@ func TestSpannerAdminDatabase_DatabaseLifecycle(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create database
-	err = adminDB.CreateDatabase(ctx)
+	// Use the same fast-polling path the other test helpers use so the
+	// lifecycle test doesn't sit on the generated client's 1-minute poll.
+	op, err := adminDB.DatabaseAdminClient().CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{
+		Parent:          "projects/" + config.ProjectID + "/instances/" + config.InstanceID,
+		CreateStatement: "CREATE DATABASE `" + config.DatabaseID + "`",
+	})
 	require.NoError(t, err)
+	require.NoError(t, waitCreateDBOp(ctx, op))
 
-	// Verify database exists by trying to connect to it
 	db, err := NewDatabase(config)
 	require.NoError(t, err)
-
-	// Test basic operation
-	ddls, err := db.DumpDDLs()
+	_, err = db.DumpDDLs()
 	require.NoError(t, err)
-	_ = ddls // Database should be accessible
-
 	db.Close()
 
-	// Drop database
 	err = adminDB.DropDatabase(ctx)
 	require.NoError(t, err)
 
-	// Verify database no longer exists by checking with admin client
-	// Note: In emulator, connection might still work briefly after drop
 	exists := databaseExists(t, ctx, config.ProjectID, config.InstanceID, config.DatabaseID)
 	assert.False(t, exists, "Database should not exist after drop")
 }
 
 func TestSpannerDatabase_RowDeletionPolicy(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
-	// Create admin database to ensure clean state
-	adminDB, err := NewAdminDatabase(config)
-	require.NoError(t, err)
-	defer adminDB.Close()
+	db := recreateDatabase(t, config)
 
-	ctx := context.Background()
-
-	// Drop and recreate database
-	err = adminDB.DropDatabase(ctx)
-	if err != nil && !strings.Contains(err.Error(), "not found") {
-		t.Logf("Warning: Could not drop database: %v", err)
-	}
-
-	err = adminDB.CreateDatabase(ctx)
-	require.NoError(t, err)
-
-	// Test with regular database connection
-	db, err := NewDatabase(config)
-	require.NoError(t, err)
-	defer db.Close()
-
-	// Create table with ROW DELETION POLICY
 	ddl := `CREATE TABLE events (
 		id INT64 NOT NULL,
 		name STRING(100),
@@ -401,45 +213,20 @@ func TestSpannerDatabase_RowDeletionPolicy(t *testing.T) {
 	) PRIMARY KEY (id),
 	ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 30 DAY))`
 
-	err = db.ExecDDL(ddl)
-	require.NoError(t, err)
+	require.NoError(t, execDDLsFast(context.Background(), db.adminClient, db.databasePath, []string{ddl}))
 
-	// Dump DDLs and verify ROW DELETION POLICY is preserved
 	dumpedDDLs, err := db.DumpDDLs()
 	require.NoError(t, err)
 	assert.Contains(t, dumpedDDLs, "ROW DELETION POLICY")
 	assert.Contains(t, dumpedDDLs, "OLDER_THAN(event_date, INTERVAL 30 DAY)")
-
-	// Clean up
-	err = adminDB.DropDatabase(ctx)
-	require.NoError(t, err)
 }
 
 func TestSpannerDatabase_RowDeletionPolicyWithInterleave(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
-	// Create admin database to ensure clean state
-	adminDB, err := NewAdminDatabase(config)
-	require.NoError(t, err)
-	defer adminDB.Close()
+	db := recreateDatabase(t, config)
 
-	ctx := context.Background()
-
-	// Drop and recreate database
-	err = adminDB.DropDatabase(ctx)
-	if err != nil && !strings.Contains(err.Error(), "not found") {
-		t.Logf("Warning: Could not drop database: %v", err)
-	}
-
-	err = adminDB.CreateDatabase(ctx)
-	require.NoError(t, err)
-
-	// Test with regular database connection
-	db, err := NewDatabase(config)
-	require.NoError(t, err)
-	defer db.Close()
-
-	// Create parent and child tables with ROW DELETION POLICY
 	ddls := []string{
 		`CREATE TABLE users (
 			id INT64 NOT NULL
@@ -453,19 +240,12 @@ func TestSpannerDatabase_RowDeletionPolicyWithInterleave(t *testing.T) {
 		ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 90 DAY))`,
 	}
 
-	err = db.ExecDDLs(ddls)
-	require.NoError(t, err)
+	require.NoError(t, execDDLsFast(context.Background(), db.adminClient, db.databasePath, ddls))
 
-	// Dump DDLs and verify both INTERLEAVE and ROW DELETION POLICY are preserved
 	dumpedDDLs, err := db.DumpDDLs()
 	require.NoError(t, err)
 
-	// Check that events table has both features
 	assert.Contains(t, dumpedDDLs, "INTERLEAVE IN PARENT users")
 	assert.Contains(t, dumpedDDLs, "ROW DELETION POLICY")
 	assert.Contains(t, dumpedDDLs, "OLDER_THAN(event_date, INTERVAL 90 DAY)")
-
-	// Clean up
-	err = adminDB.DropDatabase(ctx)
-	require.NoError(t, err)
 }

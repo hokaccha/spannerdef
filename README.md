@@ -145,19 +145,22 @@ go build ./cmd/spannerdef
 
 ### Testing
 
-spannerdef includes comprehensive tests that use Spanner emulator.
+spannerdef's integration tests run against [Spanner Omni](https://cloud.google.com/spanner-omni/docs) — the offline single-server distribution of Spanner. Omni matches production DDL semantics (e.g. foreign keys dumped as `ALTER TABLE ADD CONSTRAINT`), which the Emulator does not.
 
-**Requirements**: Docker/Docker Compose for Spanner emulator.
+**Requirements**: Docker.
 
 ```bash
-# Start Spanner emulator
-docker-compose up
+# Start Spanner Omni
+make omni-up
 
 # Run all tests
 make test
 
 # Run specific tests
 go test -v . -run TestBasicOperations
+
+# Stop Spanner Omni and clear its volume
+make omni-down
 ```
 
 ## Limitations
