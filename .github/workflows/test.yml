@@ -6,60 +6,54 @@ on:
       - "**"
 
 jobs:
-  test:
+  test-omni:
+    name: Tests (Spanner Omni)
     runs-on: ubuntu-latest
-
-    services:
-      spanner-emulator:
-        image: gcr.io/cloud-spanner-emulator/emulator:1.5.34
-        ports:
-          - 9010:9010
-          - 9020:9020
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version-file: go.mod
 
-    - name: Install gcloud CLI (for Spanner client)
-      uses: google-github-actions/setup-gcloud@v1
-      with:
-        version: 'latest'
-
-    - name: Wait for Spanner emulator to be ready
+    - name: Start Spanner Omni
+      # Omni's single-server mode uses project=default, instance=default
+      # and listens on gRPC 15000. --network host isn't reliable on GitHub
+      # Actions Linux runners, so publish the port explicitly.
       run: |
-        timeout 60 bash -c 'until nc -z localhost 9010; do sleep 1; done'
-        timeout 60 bash -c 'until nc -z localhost 9020; do sleep 1; done'
-        echo "Spanner emulator is ready"
+        docker run -d \
+          --name spanneromni \
+          -p 15000:15000 \
+          -v spanner:/spanner \
+          us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r1-beta \
+          start-single-server
 
-    - name: Create Spanner instance and database
-      env:
-        CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER: http://localhost:9020/
-        SPANNER_EMULATOR_HOST: localhost:9010
-        SPANNER_EMULATOR_HOST_REST: localhost:9020
-        CLOUDSDK_CORE_PROJECT: test-project
-        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: true
+    - name: Wait for Spanner Omni to be ready
       run: |
-        # Set default project for emulator
-        gcloud config set project test-project
-        gcloud config set auth/disable_credentials true
-        gcloud config set api_endpoint_overrides/spanner http://localhost:9020/
-
-        # Create instance
-        gcloud spanner instances create test-instance \
-          --config=emulator-config \
-          --description="Test instance" \
-          --nodes=1
-
-        # Create database
-        gcloud spanner databases create test-database \
-          --instance=test-instance
+        for i in $(seq 1 90); do
+          if docker logs spanneromni 2>&1 | grep -q "Spanner is ready"; then
+            echo "Spanner Omni is ready"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Spanner Omni failed to become ready"
+        docker logs spanneromni
+        exit 1
 
     - name: Download dependencies
       run: go mod download
 
-    - name: Run unit tests
-      run: go test -v ./...
+    - name: Run tests
+      env:
+        SPANNER_EMULATOR_HOST: localhost:15000
+        SPANNER_PROJECT_ID: default
+        SPANNER_INSTANCE_ID: default
+      run: go test -v -count=1 -timeout 15m -parallel 80 ./...
+
+    - name: Dump Omni logs on failure
+      if: failure()
+      run: docker logs spanneromni || true

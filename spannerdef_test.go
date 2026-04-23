@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,49 +17,45 @@ type TestCase struct {
 	Expected string // Expected DDL output (empty means no changes expected)
 }
 
-// recreateDatabase drops and recreates the test database for a clean state
-func recreateDatabase(t *testing.T, config Config) Database {
-	// For emulator, we can recreate the database for each test
-	adminDB, err := NewAdminDatabase(config)
-	require.NoError(t, err)
-	defer adminDB.Close()
-
-	// Drop and recreate database
-	ctx := context.Background()
-	err = adminDB.DropDatabase(ctx)
-	if err != nil && !strings.Contains(err.Error(), "not found") {
-		t.Logf("Warning: Could not drop database: %v", err)
-	}
-
-	err = adminDB.CreateDatabase(ctx)
-	require.NoError(t, err, "Failed to create test database")
-
-	// Wait a moment for database to be ready
-	time.Sleep(100 * time.Millisecond)
-
-	// Return regular database connection
-	db, err := NewDatabase(config)
-	require.NoError(t, err)
+// recreateDatabase returns a freshly-created database dedicated to this test.
+// Each caller gets its own Spanner database so the test suite can run in
+// parallel against Omni without stepping on shared schema.
+func recreateDatabase(t *testing.T, config Config) *SpannerDatabase {
+	t.Helper()
+	db, _ := newTestDatabase(t, config)
 	return db
 }
 
-// applySchema applies the given schema and returns the generated DDLs
-func applySchema(t *testing.T, db Database, schema string, enableDrop bool) []string {
+// applySchema computes the DDL diff and applies it through the admin client
+// with a short polling interval. It intentionally bypasses SpannerDatabase's
+// own ExecDDLs path (which waits on the generated client's 1-minute LRO
+// polling interval) because setup DDLs are not what we're testing.
+func applySchema(t *testing.T, db *SpannerDatabase, schema string, enableDrop bool) []string {
 	t.Helper()
 
-	// Generate DDLs
 	currentDDLs, err := db.DumpDDLs()
 	require.NoError(t, err)
 
 	ddls, err := GenerateIdempotentDDLs(schema, currentDDLs, GeneratorConfig{})
 	require.NoError(t, err)
 
-	// Apply the DDLs
-	if len(ddls) > 0 {
-		err = RunDDLs(db, ddls, enableDrop, true)
-		require.NoError(t, err)
+	if len(ddls) == 0 {
+		return ddls
 	}
 
+	valid := make([]string, 0, len(ddls))
+	for _, ddl := range ddls {
+		if !enableDrop && (strings.Contains(ddl, "DROP TABLE") ||
+			strings.Contains(ddl, "DROP INDEX") ||
+			strings.Contains(ddl, "DROP COLUMN")) {
+			continue
+		}
+		valid = append(valid, ddl)
+	}
+
+	if len(valid) > 0 {
+		require.NoError(t, execDDLsFast(context.Background(), db.adminClient, db.databasePath, valid))
+	}
 	return ddls
 }
 
@@ -87,9 +82,11 @@ func assertDDLNotContains(t *testing.T, ddls []string, pattern string) {
 
 // TestBasicOperations tests basic DDL operations
 func TestBasicOperations(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
 	t.Run("CreateTable", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -115,6 +112,7 @@ func TestBasicOperations(t *testing.T) {
 	})
 
 	t.Run("AddColumn", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -143,6 +141,7 @@ func TestBasicOperations(t *testing.T) {
 	})
 
 	t.Run("DropColumn", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -171,6 +170,7 @@ func TestBasicOperations(t *testing.T) {
 	})
 
 	t.Run("CreateIndex", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -192,6 +192,7 @@ func TestBasicOperations(t *testing.T) {
 	})
 
 	t.Run("DropIndex", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -225,6 +226,7 @@ func TestBasicOperations(t *testing.T) {
 	})
 
 	t.Run("DropTable", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -258,9 +260,11 @@ func TestBasicOperations(t *testing.T) {
 
 // TestSpannerSpecificFeatures tests Spanner-specific DDL features
 func TestSpannerSpecificFeatures(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
 	t.Run("ArrayColumns", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -284,6 +288,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("CommitTimestamp", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -303,6 +308,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("IndexWithStoring", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -327,6 +333,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("InterleavedTables", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -353,6 +360,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("InterleavedTablesOrder", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -395,6 +403,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("ColumnOrdering", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -431,6 +440,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("DefaultClauseSupport", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -452,6 +462,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("ColumnTypeChange", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -477,6 +488,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("CheckConstraints", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -502,6 +514,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("AddCheckConstraint", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -530,6 +543,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("DropCheckConstraint", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -558,6 +572,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("ModifyCheckConstraint", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -589,6 +604,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("MultipleCheckConstraints", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -617,6 +633,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("ForeignKeyConstraints", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -647,6 +664,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("AddForeignKeyConstraint", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -685,6 +703,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("DropForeignKeyConstraint", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -723,6 +742,7 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	})
 
 	t.Run("ForeignKeyWithMultipleColumns", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -755,15 +775,18 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 	// Skipping this test as Spanner doesn't support ON DELETE in FOREIGN KEY constraints
 	// within CREATE TABLE statements. ON DELETE is only supported for INTERLEAVE relationships.
 	t.Run("ForeignKeyWithOnDelete", func(t *testing.T) {
+		t.Parallel()
 		t.Skip("Spanner doesn't support ON DELETE in FOREIGN KEY constraints")
 	})
 }
 
 // TestEdgeCases tests edge cases and error conditions
 func TestEdgeCases(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
 	t.Run("EmptySchema", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -772,6 +795,7 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("NoChanges", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -789,6 +813,7 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("DropWithoutEnableDrop", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -831,6 +856,7 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("ComplexColumnTypes", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -863,9 +889,11 @@ func TestEdgeCases(t *testing.T) {
 
 // TestConcurrentOperations tests behavior with multiple tables and indexes
 func TestConcurrentOperations(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
 	t.Run("MultipleTablesAndIndexes", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -912,9 +940,11 @@ func TestConcurrentOperations(t *testing.T) {
 
 // TestExport tests the export functionality
 func TestExport(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
 	t.Run("ExportEmptyDatabase", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -926,6 +956,7 @@ func TestExport(t *testing.T) {
 	})
 
 	t.Run("ExportWithTables", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -949,9 +980,11 @@ func TestExport(t *testing.T) {
 
 // TestConfigFiltering tests table filtering functionality
 func TestConfigFiltering(t *testing.T) {
+	t.Parallel()
 	config := getTestConfig(t)
 
 	t.Run("TargetTables", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
@@ -987,6 +1020,7 @@ func TestConfigFiltering(t *testing.T) {
 	})
 
 	t.Run("SkipTables", func(t *testing.T) {
+		t.Parallel()
 		db := recreateDatabase(t, config)
 		defer db.Close()
 
