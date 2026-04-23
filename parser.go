@@ -77,26 +77,32 @@ func ParseDDLs(ddls string) (*Schema, error) {
 		return nil, fmt.Errorf("failed to parse DDLs: %v", err)
 	}
 
+	// Two passes: create tables/indexes first, then apply alterations.
+	// Spanner's GetDatabaseDdl emits foreign keys as separate ALTER TABLE
+	// statements, and the statements may not be ordered so that tables
+	// precede their own ALTERs (in particular, spanner.DumpDDLs sorts them
+	// alphabetically, which puts ALTER before CREATE).
 	for _, stmt := range parsed {
-		if err := processStatement(schema, stmt); err != nil {
-			return nil, fmt.Errorf("failed to process statement: %v", err)
+		switch s := stmt.(type) {
+		case *ast.CreateTable:
+			if err := processCreateTable(schema, s); err != nil {
+				return nil, fmt.Errorf("failed to process statement: %v", err)
+			}
+		case *ast.CreateIndex:
+			if err := processCreateIndex(schema, s); err != nil {
+				return nil, fmt.Errorf("failed to process statement: %v", err)
+			}
+		}
+	}
+	for _, stmt := range parsed {
+		if s, ok := stmt.(*ast.AlterTable); ok {
+			if err := processAlterTable(schema, s); err != nil {
+				return nil, fmt.Errorf("failed to process statement: %v", err)
+			}
 		}
 	}
 
 	return schema, nil
-}
-
-// processStatement processes a parsed DDL statement
-func processStatement(schema *Schema, stmt ast.DDL) error {
-	switch s := stmt.(type) {
-	case *ast.CreateTable:
-		return processCreateTable(schema, s)
-	case *ast.CreateIndex:
-		return processCreateIndex(schema, s)
-	default:
-		// Ignore other DDL types for now
-		return nil
-	}
 }
 
 // processCreateTable processes CREATE TABLE statement
@@ -140,49 +146,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 
 	// Process table constraints
 	for _, tc := range stmt.TableConstraints {
-		constraintName := ""
-		if tc.Name != nil {
-			constraintName = tc.Name.Name
-		}
-
-		switch c := tc.Constraint.(type) {
-		case *ast.Check:
-			if constraintName == "" {
-				// Generate a name if not specified
-				constraintName = fmt.Sprintf("CK_%s_%d", tableName, len(table.Constraints))
-			}
-			table.Constraints[constraintName] = &Constraint{
-				Name:       constraintName,
-				Type:       "CHECK",
-				Expression: "(" + c.Expr.SQL() + ")",
-			}
-		case *ast.ForeignKey:
-			if constraintName == "" {
-				// Generate a name if not specified
-				constraintName = fmt.Sprintf("FK_%s_%d", tableName, len(table.Constraints))
-			}
-
-			// Extract column names
-			var columns []string
-			for _, col := range c.Columns {
-				columns = append(columns, col.Name)
-			}
-
-			// Extract reference columns
-			var refColumns []string
-			for _, col := range c.ReferenceColumns {
-				refColumns = append(refColumns, col.Name)
-			}
-
-			table.Constraints[constraintName] = &Constraint{
-				Name:             constraintName,
-				Type:             "FOREIGN KEY",
-				Columns:          columns,
-				ReferenceTable:   getPathName(c.ReferenceTable),
-				ReferenceColumns: refColumns,
-				OnDelete:         string(c.OnDelete),
-			}
-		}
+		registerTableConstraint(table, tc)
 	}
 
 	// Process interleave information
@@ -208,6 +172,70 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 
 	schema.Tables[tableName] = table
 	return nil
+}
+
+// processAlterTable processes ALTER TABLE statement. Only the actions that
+// affect the schema model (currently ADD CONSTRAINT) are handled — others
+// are ignored so round-tripping DDL from Spanner/Omni's GetDatabaseDdl does
+// not error out.
+func processAlterTable(schema *Schema, stmt *ast.AlterTable) error {
+	tableName := getPathName(stmt.Name)
+	table, ok := schema.Tables[tableName]
+	if !ok {
+		return nil
+	}
+
+	if add, ok := stmt.TableAlteration.(*ast.AddTableConstraint); ok && add.TableConstraint != nil {
+		registerTableConstraint(table, add.TableConstraint)
+	}
+
+	return nil
+}
+
+// registerTableConstraint records a CHECK or FOREIGN KEY constraint on a table.
+// Shared between CREATE TABLE parsing and ALTER TABLE ADD CONSTRAINT parsing —
+// Spanner's GetDatabaseDdl returns foreign keys as separate ALTER TABLE
+// statements, so both entry points must produce the same in-memory shape.
+func registerTableConstraint(table *Table, tc *ast.TableConstraint) {
+	constraintName := ""
+	if tc.Name != nil {
+		constraintName = tc.Name.Name
+	}
+
+	switch c := tc.Constraint.(type) {
+	case *ast.Check:
+		if constraintName == "" {
+			constraintName = fmt.Sprintf("CK_%s_%d", table.Name, len(table.Constraints))
+		}
+		table.Constraints[constraintName] = &Constraint{
+			Name:       constraintName,
+			Type:       "CHECK",
+			Expression: "(" + c.Expr.SQL() + ")",
+		}
+	case *ast.ForeignKey:
+		if constraintName == "" {
+			constraintName = fmt.Sprintf("FK_%s_%d", table.Name, len(table.Constraints))
+		}
+
+		var columns []string
+		for _, col := range c.Columns {
+			columns = append(columns, col.Name)
+		}
+
+		var refColumns []string
+		for _, col := range c.ReferenceColumns {
+			refColumns = append(refColumns, col.Name)
+		}
+
+		table.Constraints[constraintName] = &Constraint{
+			Name:             constraintName,
+			Type:             "FOREIGN KEY",
+			Columns:          columns,
+			ReferenceTable:   getPathName(c.ReferenceTable),
+			ReferenceColumns: refColumns,
+			OnDelete:         string(c.OnDelete),
+		}
+	}
 }
 
 // processCreateIndex processes CREATE INDEX statement

@@ -1085,3 +1085,97 @@ ROW DELETION POLICY (OLDER_THAN(event_date, INTERVAL 90 DAY))`
 
 	assert.Equal(t, expectedDDL, ddls[0])
 }
+
+// Spanner's GetDatabaseDdl (and Spanner Omni) returns foreign-key
+// constraints as standalone ALTER TABLE ADD CONSTRAINT statements rather
+// than inline inside CREATE TABLE. The parser must fold these back into
+// the referenced table so that diffing against the desired schema reports
+// no changes.
+func TestParseDDLs_AlterTableAddForeignKey(t *testing.T) {
+	ddl := `
+		ALTER TABLE posts ADD CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(id);
+
+		CREATE TABLE users (
+			id STRING(36) NOT NULL
+		) PRIMARY KEY (id);
+
+		CREATE TABLE posts (
+			id STRING(36) NOT NULL,
+			user_id STRING(36) NOT NULL
+		) PRIMARY KEY (id);
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	posts, exists := schema.Tables["posts"]
+	require.True(t, exists)
+
+	c, exists := posts.Constraints["fk_user"]
+	require.True(t, exists, "fk_user constraint should be registered on posts")
+	assert.Equal(t, "FOREIGN KEY", c.Type)
+	assert.Equal(t, []string{"user_id"}, c.Columns)
+	assert.Equal(t, "users", c.ReferenceTable)
+	assert.Equal(t, []string{"id"}, c.ReferenceColumns)
+}
+
+func TestParseDDLs_AlterTableAddCheck(t *testing.T) {
+	ddl := `
+		CREATE TABLE items (
+			id INT64 NOT NULL,
+			qty INT64 NOT NULL
+		) PRIMARY KEY (id);
+
+		ALTER TABLE items ADD CONSTRAINT ck_qty CHECK (qty > 0);
+	`
+
+	schema, err := ParseDDLs(ddl)
+	require.NoError(t, err)
+
+	items := schema.Tables["items"]
+	require.NotNil(t, items)
+
+	c, exists := items.Constraints["ck_qty"]
+	require.True(t, exists)
+	assert.Equal(t, "CHECK", c.Type)
+	assert.Contains(t, c.Expression, "qty")
+}
+
+// When the parsed DDL already matches the desired schema (including
+// foreign keys emitted as standalone ALTER TABLE statements), GenerateDDLs
+// must produce no diff. This guards against the regression where Spanner
+// Omni's GetDatabaseDdl output caused a spurious ADD CONSTRAINT on every
+// apply.
+func TestGenerateDDLs_NoDiffWhenForeignKeyEmittedAsAlterTable(t *testing.T) {
+	currentDDL := `
+		ALTER TABLE posts ADD CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(id);
+
+		CREATE TABLE users (
+			id STRING(36) NOT NULL
+		) PRIMARY KEY (id);
+
+		CREATE TABLE posts (
+			id STRING(36) NOT NULL,
+			user_id STRING(36) NOT NULL
+		) PRIMARY KEY (id);
+	`
+	desiredDDL := `
+		CREATE TABLE users (
+			id STRING(36) NOT NULL
+		) PRIMARY KEY (id);
+
+		CREATE TABLE posts (
+			id STRING(36) NOT NULL,
+			user_id STRING(36) NOT NULL,
+			CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users (id)
+		) PRIMARY KEY (id);
+	`
+
+	current, err := ParseDDLs(currentDDL)
+	require.NoError(t, err)
+	desired, err := ParseDDLs(desiredDDL)
+	require.NoError(t, err)
+
+	ddls := GenerateDDLs(current, desired)
+	assert.Empty(t, ddls, "expected no diff, got: %v", ddls)
+}
