@@ -6,8 +6,8 @@ on:
       - "**"
 
 jobs:
-  test-omni:
-    name: Tests (Spanner Omni)
+  test:
+    name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
