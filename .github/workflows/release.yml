@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -106,3 +107,24 @@ jobs:
           3. Move to your PATH: `sudo mv spannerdef-* /usr/local/bin/spannerdef`
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up ko
+      # Logs in to ghcr.io with GITHUB_TOKEN automatically.
+      uses: ko-build/setup-ko@v0.9
+
+    - name: Build and push container image
+      # ko compiles ./cmd/spannerdef (settings in .ko.yaml) into a multi-arch
+      # image on a static distroless base and pushes
+      # ghcr.io/<owner>/spannerdef:<tag> and :latest with an SPDX SBOM.
+      # No Dockerfile or Docker daemon is involved.
+      env:
+        KO_DOCKER_REPO: ghcr.io/${{ github.repository }}
+      run: |
+        ko build ./cmd/spannerdef \
+          --bare \
+          --platform=linux/amd64,linux/arm64 \
+          --tags="${VERSION},latest" \
+          --sbom=spdx \
+          --image-label="org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+          --image-label="org.opencontainers.image.version=${VERSION}" \
+          --image-label="org.opencontainers.image.revision=${GITHUB_SHA}"

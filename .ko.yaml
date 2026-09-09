@@ -1,0 +1,16 @@
+# ko (https://ko.build) builds the container image published on each release:
+# no Dockerfile, no Docker daemon, multi-arch manifest and SBOM out of the box.
+# The release workflow runs:
+#   KO_DOCKER_REPO=ghcr.io/hokaccha/spannerdef ko build ./cmd/spannerdef --bare ...
+defaultBaseImage: cgr.dev/chainguard/static:latest
+builds:
+  - id: spannerdef
+    main: ./cmd/spannerdef
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Env.VERSION}}
+      - -X main.buildDate={{.Env.BUILD_DATE}}

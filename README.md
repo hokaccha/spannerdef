@@ -27,6 +27,20 @@ Or install with [mise](https://mise.jdx.dev/):
 mise use -g github:hokaccha/spannerdef@latest
 ```
 
+Or run the container image (multi-arch `linux/amd64` + `linux/arm64`, built with [ko](https://ko.build) on every release):
+
+```bash
+docker run --rm ghcr.io/hokaccha/spannerdef:latest --help
+```
+
+The image is the static binary (at `/ko-app/spannerdef`, the entrypoint) on a distroless base running as a non-root user, so it works directly as a migration step in CI or as a Cloud Run job:
+
+```bash
+docker run --rm -v "$PWD/schema.sql:/schema.sql:ro" \
+  -e SPANNER_EMULATOR_HOST=host.docker.internal:9010 \
+  ghcr.io/hokaccha/spannerdef:latest --project=P --instance=I --database=D --file=/schema.sql
+```
+
 ## Usage
 
 ```bash
