@@ -1,0 +1,61 @@
+name: Main image
+
+# Build and push ghcr.io/<repository>:main on every merge to main. This is
+# the release image pipeline run continuously: a breakage in ko, its setup
+# Action or the base image shows up here instead of on release day, and
+# unreleased fixes can be tried with the `main` tag. The tag is mutable and
+# carries no compatibility promise; every build's digest is printed in the
+# job summary for pinning. No GitHub release and no binaries are produced.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: main-image
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Build and push main image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      with:
+        go-version-file: go.mod
+
+    - name: Check that this commit is still the tip of main
+      # Re-running an old workflow run keeps its original commit. Without this
+      # guard such a rerun would move the moving `main` tag back to an older
+      # build. Concurrency only serialises runs; it does not enforce freshness.
+      id: tip
+      run: |
+        git fetch --quiet origin main
+        tip="$(git rev-parse origin/main)"
+        if [ "$tip" = "$GITHUB_SHA" ]; then
+          echo "fresh=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "fresh=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Skipping: main is now at ${tip}, this run is for ${GITHUB_SHA}"
+        fi
+
+    - name: Set up environment variables
+      if: steps.tip.outputs.fresh == 'true'
+      run: |
+        echo "VERSION=main-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+        echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+    - uses: ./.github/actions/ko-image
+      if: steps.tip.outputs.fresh == 'true'
+      with:
+        version: ${{ env.VERSION }}
+        build-date: ${{ env.BUILD_DATE }}
+        tags: main

@@ -1,0 +1,47 @@
+name: Cleanup old images
+
+# Old `main` builds become untagged once the tag moves on. Remove them, and
+# any SBOM referrers left without a parent, with an action that understands
+# multi-arch indexes: a plain "delete untagged versions" step would delete
+# the per-platform manifests that tagged indexes (releases, latest, main)
+# still reference and break docker pull. Release tags, `latest` and `main`
+# are never touched. The manual trigger defaults to a dry run.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Only log what would be deleted
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+concurrency:
+  group: cleanup-image
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete old untagged images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+      with:
+        dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run || false }}
+        # Untagged versions are old main builds (their platform children are
+        # handled with them). Keep the newest ten for digest pinning and
+        # anything younger than 30 days.
+        delete-untagged: true
+        keep-n-untagged: 10
+        older-than: 30 days
+        # SBOM referrers (sha256-<digest>.sbom tags) whose image is gone.
+        delete-orphaned-images: true
+        # Belt and braces: never a rule target.
+        exclude-tags: latest,main,v*
+        # Verify every remaining multi-arch index still has all its children.
+        validate: true
