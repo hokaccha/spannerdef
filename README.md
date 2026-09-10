@@ -21,6 +21,8 @@ Idempotent Google Cloud Spanner schema management by SQL, inspired by [sqldef](h
 go install github.com/hokaccha/spannerdef/cmd/spannerdef@latest
 ```
 
+Release binaries are built with the current Go release; the macOS binaries require macOS 13 or later.
+
 Or install with [mise](https://mise.jdx.dev/):
 
 ```bash
@@ -37,9 +39,12 @@ The image is the static binary (at `/ko-app/spannerdef`, the entrypoint) on a di
 
 ```bash
 docker run --rm -v "$PWD/schema.sql:/schema.sql:ro" \
+  --add-host=host.docker.internal:host-gateway \
   -e SPANNER_EMULATOR_HOST=host.docker.internal:9010 \
   ghcr.io/hokaccha/spannerdef:latest --project=P --instance=I --database=D --file=/schema.sql
 ```
+
+(`--add-host` is needed on Linux Docker Engine; Docker Desktop resolves `host.docker.internal` by itself.)
 
 ## Usage
 
