@@ -107,29 +107,14 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Set up ko
-      # Logs in to ghcr.io with GITHUB_TOKEN automatically.
-      uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d # v0.9
-      with:
-        version: v0.19.1
-
     - name: Build and push container image
-      # ko compiles ./cmd/spannerdef (settings in .ko.yaml) into a multi-arch
-      # image on a static distroless base and pushes
-      # ghcr.io/<owner>/spannerdef:<tag> and :latest with an SPDX SBOM.
-      # No Dockerfile or Docker daemon is involved.
-      run: |
-        # Image references must be lowercase; the repository slug may not be.
-        repository="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
-        export KO_DOCKER_REPO="ghcr.io/${repository}"
-        ko build ./cmd/spannerdef \
-          --bare \
-          --platform=linux/amd64,linux/arm64 \
-          --tags="${VERSION},latest" \
-          --sbom=spdx \
-          --image-label="org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-          --image-label="org.opencontainers.image.version=${VERSION}" \
-          --image-label="org.opencontainers.image.revision=${GITHUB_SHA}"
+      # Same composite action as main-image.yml, so a release image is built
+      # exactly like the main image that CI exercises on every merge.
+      uses: ./.github/actions/ko-image
+      with:
+        version: ${{ env.VERSION }}
+        build-date: ${{ env.BUILD_DATE }}
+        tags: ${{ env.VERSION }},latest
 
     - name: Publish the release
       # The release is created as a draft above and only published once the

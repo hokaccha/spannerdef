@@ -46,6 +46,8 @@ docker run --rm -v "$PWD/schema.sql:/schema.sql:ro" \
 
 (`--add-host` is needed on Linux Docker Engine; Docker Desktop resolves `host.docker.internal` by itself.)
 
+Successful builds of `main` also publish `ghcr.io/hokaccha/spannerdef:main`, the unreleased latest build (`--version` reports `main-<commit>`; superseded builds may be cancelled). It is a moving tag with no compatibility promise; pin the digest printed in the workflow's job summary if you rely on a particular build. Old `main` builds stay pullable by digest for 30 days, after which a weekly cleanup removes them.
+
 ## Usage
 
 ```bash

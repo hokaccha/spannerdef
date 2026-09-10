@@ -1,0 +1,60 @@
+name: Build and push the spannerdef image
+description: >-
+  Compile ./cmd/spannerdef with ko (settings in .ko.yaml) into a multi-arch
+  image on a static distroless base and push it to ghcr.io/<repository> with
+  the given tags and an SPDX SBOM. Shared by the release and main workflows so
+  both build the image the same way. Requires packages: write and a checkout
+  with Go already set up.
+inputs:
+  version:
+    description: Value injected as main.version (and the image version label)
+    required: true
+  build-date:
+    description: Value injected as main.buildDate (RFC 3339)
+    required: true
+  tags:
+    description: Comma-separated image tags to push
+    required: true
+outputs:
+  image:
+    description: The pushed image reference with digest
+    value: ${{ steps.build.outputs.image }}
+runs:
+  using: composite
+  steps:
+    - name: Set up ko
+      # Logs in to ghcr.io with GITHUB_TOKEN automatically.
+      uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d # v0.9
+      with:
+        version: v0.19.1
+
+    - name: Build and push container image
+      id: build
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        BUILD_DATE: ${{ inputs.build-date }}
+        TAGS: ${{ inputs.tags }}
+      run: |
+        set -euo pipefail
+        # Image references must be lowercase; the repository slug may not be.
+        repository="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+        export KO_DOCKER_REPO="ghcr.io/${repository}"
+        image="$(ko build ./cmd/spannerdef \
+          --bare \
+          --platform=linux/amd64,linux/arm64 \
+          --tags="${TAGS}" \
+          --sbom=spdx \
+          --image-label="org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+          --image-label="org.opencontainers.image.version=${VERSION}" \
+          --image-label="org.opencontainers.image.revision=${GITHUB_SHA}")"
+        echo "image=${image}" >> "$GITHUB_OUTPUT"
+        {
+          echo "### Container image"
+          echo
+          echo '```'
+          echo "${image}"
+          echo '```'
+          echo
+          echo "Tags: ${TAGS} · version ${VERSION}"
+        } >> "$GITHUB_STEP_SUMMARY"
