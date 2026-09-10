@@ -1,10 +1,11 @@
 module github.com/hokaccha/spannerdef
 
-go 1.24.3
+go 1.27.1
 
 require (
 	cloud.google.com/go/spanner v1.82.0
 	github.com/cloudspannerecosystem/memefish v0.6.1
+	github.com/googleapis/gax-go/v2 v2.14.1
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/stretchr/testify v1.10.0
 	google.golang.org/grpc v1.72.0
@@ -35,7 +36,6 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
-	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
