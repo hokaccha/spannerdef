@@ -13,7 +13,10 @@ type Config struct {
 	ProjectID  string
 	InstanceID string
 	DatabaseID string
-	// Future: CredentialsFile string
+	// ImpersonateServiceAccount, when set, makes every Spanner API call use
+	// short-lived credentials for this service account obtained through the
+	// IAM Credentials API with the caller's Application Default Credentials.
+	ImpersonateServiceAccount string
 }
 
 type GeneratorConfig struct {

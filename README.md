@@ -67,9 +67,23 @@ Application Options:
       --export                 Just dump the current schema to stdout
       --enable-drop            Enable destructive changes such as DROP TABLE, DROP INDEX
       --config=                YAML file to specify: target_tables, skip_tables
+      --impersonate-service-account=email
+                               Run as this service account using short-lived credentials from the IAM
+                               Credentials API (the caller needs roles/iam.serviceAccountTokenCreator on it)
       --help                   Show this help
       --version                Show this version
 ```
+
+### Authentication
+
+spannerdef uses [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials). To apply DDL as a different identity, for example when only a dedicated migration service account holds `roles/spanner.databaseAdmin`, pass `--impersonate-service-account`: every API call then uses short-lived credentials for that account, minted through the IAM Credentials API. The caller only needs `roles/iam.serviceAccountTokenCreator` on the target account.
+
+```bash
+spannerdef --project=my-project --instance=my-instance --database=my-db \
+  --impersonate-service-account=migrate@my-project.iam.gserviceaccount.com < schema.sql
+```
+
+When `SPANNER_EMULATOR_HOST` is set the emulator ignores credentials, so impersonation is skipped.
 
 ## Examples
 

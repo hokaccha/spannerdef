@@ -17,16 +17,17 @@ var (
 // parseOptions parses command line options
 func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 	var opts struct {
-		ProjectID  string   `short:"p" long:"project" description:"Google Cloud Project ID (or set SPANNER_PROJECT_ID)" value-name:"project_id"`
-		InstanceID string   `short:"i" long:"instance" description:"Spanner Instance ID (or set SPANNER_INSTANCE_ID)" value-name:"instance_id"`
-		DatabaseID string   `short:"d" long:"database" description:"Spanner Database ID (or set SPANNER_DATABASE_ID)" value-name:"database_id"`
-		File       []string `long:"file" description:"Read desired SQL from the file, rather than stdin" value-name:"sql_file" default:"-"`
-		DryRun     bool     `long:"dry-run" description:"Don't run DDLs but just show them"`
-		Export     bool     `long:"export" description:"Just dump the current schema to stdout"`
-		EnableDrop bool     `long:"enable-drop" description:"Enable destructive changes such as DROP TABLE, DROP INDEX"`
-		Config     string   `long:"config" description:"YAML file to specify: target_tables, skip_tables"`
-		Help       bool     `long:"help" description:"Show this help"`
-		Version    bool     `long:"version" description:"Show this version"`
+		ProjectID                 string   `short:"p" long:"project" description:"Google Cloud Project ID (or set SPANNER_PROJECT_ID)" value-name:"project_id"`
+		InstanceID                string   `short:"i" long:"instance" description:"Spanner Instance ID (or set SPANNER_INSTANCE_ID)" value-name:"instance_id"`
+		DatabaseID                string   `short:"d" long:"database" description:"Spanner Database ID (or set SPANNER_DATABASE_ID)" value-name:"database_id"`
+		File                      []string `long:"file" description:"Read desired SQL from the file, rather than stdin" value-name:"sql_file" default:"-"`
+		DryRun                    bool     `long:"dry-run" description:"Don't run DDLs but just show them"`
+		Export                    bool     `long:"export" description:"Just dump the current schema to stdout"`
+		EnableDrop                bool     `long:"enable-drop" description:"Enable destructive changes such as DROP TABLE, DROP INDEX"`
+		Config                    string   `long:"config" description:"YAML file to specify: target_tables, skip_tables"`
+		ImpersonateServiceAccount string   `long:"impersonate-service-account" description:"Run as this service account using short-lived credentials from the IAM Credentials API (the caller needs roles/iam.serviceAccountTokenCreator on it)" value-name:"email"`
+		Help                      bool     `long:"help" description:"Show this help"`
+		Version                   bool     `long:"version" description:"Show this version"`
 	}
 
 	parser := flags.NewParser(&opts, flags.None)
@@ -87,9 +88,10 @@ func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 	}
 
 	config := spannerdef.Config{
-		ProjectID:  opts.ProjectID,
-		InstanceID: opts.InstanceID,
-		DatabaseID: opts.DatabaseID,
+		ProjectID:                 opts.ProjectID,
+		InstanceID:                opts.InstanceID,
+		DatabaseID:                opts.DatabaseID,
+		ImpersonateServiceAccount: opts.ImpersonateServiceAccount,
 	}
 
 	return config, &options

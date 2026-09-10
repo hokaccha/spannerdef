@@ -278,3 +278,30 @@ func TestHelpFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestParseOptions_ImpersonateServiceAccount(t *testing.T) {
+	args := []string{
+		"--project=test-project",
+		"--instance=test-instance",
+		"--database=test-database",
+		"--impersonate-service-account=migrate@example.iam.gserviceaccount.com",
+		"--export",
+	}
+
+	config, _ := parseOptions(args)
+
+	assert.Equal(t, "migrate@example.iam.gserviceaccount.com", config.ImpersonateServiceAccount)
+}
+
+func TestParseOptions_ImpersonateServiceAccountDefaultsToEmpty(t *testing.T) {
+	args := []string{
+		"--project=test-project",
+		"--instance=test-instance",
+		"--database=test-database",
+		"--export",
+	}
+
+	config, _ := parseOptions(args)
+
+	assert.Equal(t, "", config.ImpersonateServiceAccount)
+}
