@@ -452,7 +452,7 @@ func generateCreateIndexDDLs(current, desired *Schema) []string {
 // generateCreateTable generates CREATE TABLE DDL
 func generateCreateTable(table *Table) string {
 	var ddl strings.Builder
-	ddl.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", table.Name))
+	fmt.Fprintf(&ddl, "CREATE TABLE %s (\n", table.Name)
 
 	// Sort columns by original order
 	type columnInfo struct {
@@ -525,7 +525,7 @@ func generateCreateTable(table *Table) string {
 
 	// Add primary key
 	if len(table.PrimaryKey) > 0 {
-		ddl.WriteString(fmt.Sprintf("\n) PRIMARY KEY (%s)", strings.Join(table.PrimaryKey, ", ")))
+		fmt.Fprintf(&ddl, "\n) PRIMARY KEY (%s)", strings.Join(table.PrimaryKey, ", "))
 	} else {
 		ddl.WriteString("\n)")
 	}
@@ -533,17 +533,17 @@ func generateCreateTable(table *Table) string {
 	// Add interleave clause if present
 	if table.ParentTable != "" {
 		ddl.WriteString(",\n")
-		ddl.WriteString(fmt.Sprintf("INTERLEAVE IN PARENT %s", table.ParentTable))
+		fmt.Fprintf(&ddl, "INTERLEAVE IN PARENT %s", table.ParentTable)
 		if table.OnDelete != "" {
-			ddl.WriteString(fmt.Sprintf(" %s", table.OnDelete))
+			fmt.Fprintf(&ddl, " %s", table.OnDelete)
 		}
 	}
 
 	// Add row deletion policy if present
 	if table.RowDeletionPolicyColumn != "" && table.RowDeletionPolicyDays > 0 {
 		ddl.WriteString(",\n")
-		ddl.WriteString(fmt.Sprintf("ROW DELETION POLICY (OLDER_THAN(%s, INTERVAL %d DAY))",
-			table.RowDeletionPolicyColumn, table.RowDeletionPolicyDays))
+		fmt.Fprintf(&ddl, "ROW DELETION POLICY (OLDER_THAN(%s, INTERVAL %d DAY))",
+			table.RowDeletionPolicyColumn, table.RowDeletionPolicyDays)
 	}
 
 	return ddl.String()

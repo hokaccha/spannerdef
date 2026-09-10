@@ -230,30 +230,6 @@ func TestParseOptions_ExportMode(t *testing.T) {
 }
 
 // Test helper function to set up environment for testing
-func setupTestEnv(t *testing.T) func() {
-	// Save original environment
-	original := map[string]string{
-		"SPANNER_PROJECT_ID":  os.Getenv("SPANNER_PROJECT_ID"),
-		"SPANNER_INSTANCE_ID": os.Getenv("SPANNER_INSTANCE_ID"),
-		"SPANNER_DATABASE_ID": os.Getenv("SPANNER_DATABASE_ID"),
-	}
-
-	// Clear environment for clean testing
-	os.Unsetenv("SPANNER_PROJECT_ID")
-	os.Unsetenv("SPANNER_INSTANCE_ID")
-	os.Unsetenv("SPANNER_DATABASE_ID")
-
-	// Return cleanup function
-	return func() {
-		for key, value := range original {
-			if value != "" {
-				os.Setenv(key, value)
-			} else {
-				os.Unsetenv(key)
-			}
-		}
-	}
-}
 
 // Test version and help flags (these exit the program, so we can't directly test them)
 // But we can test that the parsing logic works correctly
