@@ -70,7 +70,7 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        draft: false
+        draft: true
         prerelease: false
         generate_release_notes: true
         files: |
@@ -84,7 +84,7 @@ jobs:
           
           Choose the binary for your platform:
           
-          **macOS:**
+          **macOS** (13 Ventura or later):
           - [spannerdef-${{ env.VERSION }}-darwin-arm64](https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}/spannerdef-${{ env.VERSION }}-darwin-arm64) (Apple Silicon)
           - [spannerdef-${{ env.VERSION }}-darwin-amd64](https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}/spannerdef-${{ env.VERSION }}-darwin-amd64) (Intel)
           
@@ -109,16 +109,19 @@ jobs:
 
     - name: Set up ko
       # Logs in to ghcr.io with GITHUB_TOKEN automatically.
-      uses: ko-build/setup-ko@v0.9
+      uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d # v0.9
+      with:
+        version: v0.19.1
 
     - name: Build and push container image
       # ko compiles ./cmd/spannerdef (settings in .ko.yaml) into a multi-arch
       # image on a static distroless base and pushes
       # ghcr.io/<owner>/spannerdef:<tag> and :latest with an SPDX SBOM.
       # No Dockerfile or Docker daemon is involved.
-      env:
-        KO_DOCKER_REPO: ghcr.io/${{ github.repository }}
       run: |
+        # Image references must be lowercase; the repository slug may not be.
+        repository="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+        export KO_DOCKER_REPO="ghcr.io/${repository}"
         ko build ./cmd/spannerdef \
           --bare \
           --platform=linux/amd64,linux/arm64 \
@@ -127,3 +130,12 @@ jobs:
           --image-label="org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
           --image-label="org.opencontainers.image.version=${VERSION}" \
           --image-label="org.opencontainers.image.revision=${GITHUB_SHA}"
+
+    - name: Publish the release
+      # The release is created as a draft above and only published once the
+      # image is pushed, so a failed image build never leaves a public release
+      # without its container. Re-running the workflow on the same tag
+      # re-pushes the image and publishes the existing draft.
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: gh release edit "$VERSION" --draft=false
