@@ -3,7 +3,7 @@ module github.com/hokaccha/spannerdef
 go 1.27.1
 
 require (
-	cloud.google.com/go/spanner v1.95.0
+	cloud.google.com/go/spanner v1.95.1
 	github.com/cloudspannerecosystem/memefish v0.8.1
 	github.com/googleapis/gax-go/v2 v2.24.1
 	github.com/jessevdk/go-flags v1.6.1
