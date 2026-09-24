@@ -127,8 +127,14 @@ func runCommand(ctx context.Context, args []string) error {
 	}
 	// Keep the default signal behavior while reading potentially blocking input.
 	// Once clients can be created, cancellation lets their deferred cleanup run.
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// The first signal cancels in-flight work. Restore the default handlers as
+	// soon as that happens, even if cleanup or stdout is blocked, so another
+	// signal can terminate the process.
+	stopOnCancel := context.AfterFunc(signalCtx, stop)
+	defer stopOnCancel()
+	ctx = signalCtx
 	if command.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, command.timeout)
