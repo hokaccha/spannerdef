@@ -32,7 +32,7 @@ jobs:
           --name spanneromni \
           -p 15000:15000 \
           -v spanner:/spanner \
-          us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r1-beta \
+          us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r2.1-beta \
           start-single-server
 
     - name: Wait for Spanner Omni to be ready
@@ -53,10 +53,12 @@ jobs:
 
     - name: Run tests
       env:
+        SPANNER_REQUIRE_BACKEND: "1"
         SPANNER_EMULATOR_HOST: localhost:15000
         SPANNER_PROJECT_ID: default
         SPANNER_INSTANCE_ID: default
-      run: go test -v -count=1 -timeout 15m -parallel 80 ./...
+      # Limit concurrent DDL operations on the smaller hosted runner.
+      run: go test -v -count=1 -timeout 15m -parallel 16 ./...
 
     - name: Dump Omni logs on failure
       if: failure()
@@ -88,3 +90,31 @@ jobs:
         go-version-input: ''
         go-version-file: go.mod
         go-package: ./...
+
+  emulator:
+    name: Emulator DDL regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+    - name: Start emulator
+      run: |
+        docker run -d --name spanneremulator -p 9010:9010 gcr.io/cloud-spanner-emulator/emulator:1.5.58
+        for i in $(seq 1 30); do
+          if (echo > /dev/tcp/localhost/9010) 2>/dev/null; then exit 0; fi
+          sleep 1
+        done
+        docker logs spanneremulator
+        exit 1
+    - name: Verify schema changes
+      env:
+        SPANNER_EMULATOR_HOST: localhost:9010
+        SPANNER_TEST_EMULATOR: '1'
+        SPANNER_REQUIRE_BACKEND: '1'
+      run: go test -v -count=1 -timeout 5m -run '^TestOmni' .
+    - name: Dump emulator logs on failure
+      if: failure()
+      run: docker logs spanneremulator || true
