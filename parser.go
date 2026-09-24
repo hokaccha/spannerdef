@@ -517,12 +517,12 @@ func generateCreateTable(table *Table) string {
 				ddl.WriteString(" (")
 				ddl.WriteString(strings.Join(constraint.ReferenceColumns, ", "))
 				ddl.WriteString(")")
-				if constraint.NotEnforced {
-					ddl.WriteString(" NOT ENFORCED")
-				}
 				if constraint.OnDelete != "" {
 					ddl.WriteString(" ")
 					ddl.WriteString(constraint.OnDelete)
+				}
+				if constraint.NotEnforced {
+					ddl.WriteString(" NOT ENFORCED")
 				}
 			}
 		}
