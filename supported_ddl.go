@@ -32,3 +32,20 @@ func validateSupportedDDL(stmt ast.DDL) error {
 	}
 	return nil
 }
+
+func ddlTableName(stmt ast.DDL) string {
+	switch s := stmt.(type) {
+	case *ast.CreateTable:
+		return getPathName(s.Name)
+	case *ast.AlterTable:
+		return getPathName(s.Name)
+	case *ast.CreateIndex:
+		return getPathName(s.TableName)
+	case *ast.CreateSearchIndex:
+		return getPathName(s.TableName)
+	case *ast.CreateVectorIndex:
+		return s.TableName.Name
+	default:
+		return ""
+	}
+}

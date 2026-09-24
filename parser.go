@@ -62,6 +62,10 @@ type Constraint struct {
 
 // ParseDDLs parses DDL statements and returns a Schema
 func ParseDDLs(ddls string) (*Schema, error) {
+	return parseDDLs(ddls, GeneratorConfig{})
+}
+
+func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	schema := &Schema{
 		Tables:  make(map[string]*Table),
 		Indexes: make(map[string]*Index),
@@ -76,6 +80,17 @@ func ParseDDLs(ddls string) (*Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse DDLs: %v", err)
 	}
+
+	// Excluded tables and their indexes/ALTERs are outside the managed schema.
+	// Keep validating statements whose scope cannot be tied to a table.
+	included := make([]ast.DDL, 0, len(parsed))
+	for _, stmt := range parsed {
+		if tableName := ddlTableName(stmt); tableName != "" && !shouldIncludeTable(tableName, config) {
+			continue
+		}
+		included = append(included, stmt)
+	}
+	parsed = included
 
 	for _, stmt := range parsed {
 		if err := validateSupportedDDL(stmt); err != nil {
