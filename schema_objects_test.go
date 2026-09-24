@@ -199,3 +199,17 @@ func TestObjectExpressionFieldCaseIsSignificant(t *testing.T) {
 		require.Contains(t, plan[0], "CREATE OR REPLACE")
 	}
 }
+
+func TestObjectAlterationsUseExistingNameSpelling(t *testing.T) {
+	cases := []struct{ current, desired, prefix string }{
+		{`CREATE SEQUENCE S OPTIONS(sequence_kind='bit_reversed_positive',skip_range_min=1,skip_range_max=10)`, `CREATE SEQUENCE s OPTIONS(sequence_kind='bit_reversed_positive',skip_range_min=1,skip_range_max=20)`, `ALTER SEQUENCE S`},
+		{`CREATE CHANGE STREAM C FOR ALL OPTIONS(retention_period='7d')`, `CREATE CHANGE STREAM c FOR ALL OPTIONS(retention_period='3d')`, `ALTER CHANGE STREAM C`},
+		{`CREATE VIEW V SQL SECURITY INVOKER AS SELECT 1 AS N`, `CREATE VIEW v SQL SECURITY INVOKER AS SELECT 2 AS N`, `CREATE OR REPLACE VIEW V`},
+	}
+	for _, tc := range cases {
+		plan, err := GenerateIdempotentDDLs(tc.desired, tc.current, GeneratorConfig{})
+		require.NoError(t, err)
+		require.Len(t, plan, 1)
+		require.True(t, strings.HasPrefix(plan[0], tc.prefix), plan)
+	}
+}

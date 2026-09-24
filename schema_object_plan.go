@@ -104,14 +104,14 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 			oldSeq := old.definition.(*ast.CreateSequence)
 			delta := changedOptions(oldSeq.Options, n.Options, true)
 			if delta != nil {
-				sequences = append(sequences, "ALTER SEQUENCE "+o.Name+" SET "+delta.SQL())
+				sequences = append(sequences, "ALTER SEQUENCE "+old.Name+" SET "+delta.SQL())
 			}
 		case *ast.CreateChangeStream:
 			prev := old.definition.(*ast.CreateChangeStream)
 			if streamForSQL(prev.For) != streamForSQL(n.For) {
-				sql := "ALTER CHANGE STREAM " + o.Name + " DROP FOR ALL"
+				sql := "ALTER CHANGE STREAM " + old.Name + " DROP FOR ALL"
 				if n.For != nil {
-					sql = "ALTER CHANGE STREAM " + o.Name + " SET " + n.For.SQL()
+					sql = "ALTER CHANGE STREAM " + old.Name + " SET " + n.For.SQL()
 				}
 				if streamNeedsNewColumns(n, current) {
 					// An intermediate suspension would introduce an unrequested capture gap.
@@ -127,18 +127,20 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 				return nil, fmt.Errorf("change stream %s explicitly tracks a structurally changed table; update its FOR clause before altering that table", o.Name)
 			}
 			if delta := changedOptions(prev.Options, n.Options, false); delta != nil {
-				after = append(after, "ALTER CHANGE STREAM "+o.Name+" SET "+delta.SQL())
+				after = append(after, "ALTER CHANGE STREAM "+old.Name+" SET "+delta.SQL())
 			}
 		case *ast.CreateView:
 			if !sameObject(old, o) {
 				copyView := *n
 				copyView.OrReplace = true
+				copyView.Name = old.definition.(*ast.CreateView).Name
 				after = append(after, copyView.SQL())
 			}
 		case *ast.CreatePropertyGraph:
 			if !sameObject(old, o) {
 				copyGraph := *n
 				copyGraph.OrReplace = true
+				copyGraph.Name = old.definition.(*ast.CreatePropertyGraph).Name
 				after = append(after, copyGraph.SQL())
 			}
 		}

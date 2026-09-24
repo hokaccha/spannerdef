@@ -63,6 +63,9 @@ func normalizeGraph(object *SchemaObject, schema *Schema) error {
 }
 func normalizeGraphElement(element *ast.PropertyGraphElement, schema *Schema, node bool) error {
 	table := tableByKey(schema, element.Name.SQL())
+	if table != nil {
+		element.Name = &ast.Ident{Name: tableFilterName(table.Name)}
+	}
 	if element.Alias != nil && strings.EqualFold(element.Alias.Name, element.Name.Name) {
 		element.Alias = nil
 	}

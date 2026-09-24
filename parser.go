@@ -158,6 +158,20 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	}
 
 	for _, object := range schema.Objects {
+		if stream, ok := object.definition.(*ast.CreateChangeStream); ok {
+			if targets, ok := stream.For.(*ast.ChangeStreamForTables); ok {
+				for _, target := range targets.Tables {
+					if table := tableByKey(schema, target.TableName.SQL()); table != nil {
+						target.TableName = &ast.Ident{Name: tableFilterName(table.Name)}
+						for i, name := range target.Columns {
+							if column := columnByKey(table, name.SQL()); column != nil {
+								target.Columns[i] = &ast.Ident{Name: tableFilterName(column.Name)}
+							}
+						}
+					}
+				}
+			}
+		}
 		if err := normalizeGraph(object, schema); err != nil {
 			return nil, err
 		}
