@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	cloud.google.com/go/spanner v1.95.1
-	github.com/cloudspannerecosystem/memefish v0.8.1
+	github.com/cloudspannerecosystem/memefish v0.8.2-0.20260912110420-1691dd67c4c7
 	github.com/googleapis/gax-go/v2 v2.24.1
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/stretchr/testify v1.12.1

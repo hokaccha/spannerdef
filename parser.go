@@ -24,6 +24,7 @@ type Table struct {
 	Name                    string
 	Columns                 map[string]*Column
 	PrimaryKey              []string
+	PrimaryKeyExplicit      bool
 	InterleaveNotEnforced   bool
 	ParentTable             string                 // empty if not interleaved
 	OnDelete                string                 // "ON DELETE CASCADE", "ON DELETE NO ACTION", or empty
@@ -49,6 +50,7 @@ type Column struct {
 
 // Index represents a Spanner index
 type Index struct {
+	keys         []*ast.IndexKey
 	SchemaName   string
 	Name         string
 	TableName    string
@@ -151,10 +153,11 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	tableName := getPathName(stmt.Name)
 
 	table := &Table{
-		Name:        tableName,
-		SchemaName:  pathSchemaName(stmt.Name),
-		Columns:     make(map[string]*Column),
-		Constraints: make(map[string]*Constraint),
+		Name:               tableName,
+		SchemaName:         pathSchemaName(stmt.Name),
+		Columns:            make(map[string]*Column),
+		Constraints:        make(map[string]*Constraint),
+		PrimaryKeyExplicit: stmt.PrimaryKeys != nil,
 	}
 
 	// Process columns
@@ -197,6 +200,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 
 		table.Columns[column.Name] = column
 		if col.PrimaryKey {
+			table.PrimaryKeyExplicit = true
 			table.PrimaryKey = append(table.PrimaryKey, col.Name.SQL())
 		}
 		columnNames[strings.ToLower(col.Name.Name)] = column
@@ -218,6 +222,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	// Process table constraints
 	for _, tc := range stmt.TableConstraints {
 		if pk, ok := tc.Constraint.(*ast.TablePrimaryKey); ok {
+			table.PrimaryKeyExplicit = true
 			for _, key := range pk.Columns {
 				table.PrimaryKey = append(table.PrimaryKey, canonicalKeySQL(key))
 			}
@@ -329,8 +334,12 @@ func processCreateIndex(schema *Schema, stmt *ast.CreateIndex) error {
 	}
 
 	// Process key columns
+	index.keys = stmt.Keys
 	for _, key := range stmt.Keys {
 		index.Columns = append(index.Columns, canonicalKeySQL(key))
+		if key.Expr != nil {
+			normalizeGenerationExpression(key.Expr, nil)
+		}
 	}
 
 	// Process storing columns
@@ -625,7 +634,7 @@ func generateCreateTable(table *Table) string {
 	}
 
 	// Add primary key
-	if len(table.PrimaryKey) > 0 {
+	if table.PrimaryKeyExplicit || len(table.PrimaryKey) > 0 {
 		fmt.Fprintf(&ddl, "\n) PRIMARY KEY (%s)", strings.Join(table.PrimaryKey, ", "))
 	} else {
 		ddl.WriteString("\n)")
