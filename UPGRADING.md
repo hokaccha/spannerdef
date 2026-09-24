@@ -84,3 +84,15 @@ Repeat this process for each environment; their live schemas may differ. Replace
 `GenerateDDLs` is deprecated in v1.7.0. Use `GenerateDDLsChecked(current, desired)` or `GenerateIdempotentDDLs(desiredSQL, currentSQL, config)` and handle the returned error before applying any DDL. The legacy function cannot return planning errors.
 
 `Schema` gained an exported `Objects` field in v1.7.0. Positional literals written against v1.5.0/v1.6.0 may no longer compile; use keyed literals or construct schemas with `ParseDDLs`. Filtering metadata is internal and is not part of the public struct.
+
+## Unreleased: safer input and DDL execution
+
+Existing public API signatures, configuration struct layouts, the `Database` interface, and valid CLI invocations are retained. Review these intentional behavior changes before upgrading from v1.7.0:
+
+- Configuration now rejects unknown YAML keys and additional documents. Correct spelling such as `skip_tables` is required; previously ignored metadata keys must be removed from this file.
+- Multiple SQL files have a newline inserted at each boundary. Use complete DDL declarations in each file rather than splitting tokens or literals across files. A single file is read verbatim.
+- Export order follows Spanner's response rather than alphabetical sorting. Textual snapshots may change without a schema change.
+- DDL batches receive explicit operation IDs, printed to stderr. Larger plans can use several sequential batches. As before, successful statements are not rolled back when a later statement fails. Do not rerun a timed-out plan while its previous operation is still running; [resume the wait](README.md#long-running-schema-updates), then export and re-plan.
+- `--timeout` is opt-in (default `0`). Signals and deadlines stop the local wait, not the accepted server operation.
+
+For library integration, migrate to `RunContext` and `ParseGeneratorConfigChecked` to receive errors and run deferred cleanup. Legacy `Run` and `ParseGeneratorConfig` retain their process-exit behavior. Errors now preserve underlying causes with wrapping; prefer `errors.Is`, `errors.As`, or gRPC status inspection over exact error-string comparisons.
