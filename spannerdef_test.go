@@ -772,11 +772,13 @@ func TestSpannerSpecificFeatures(t *testing.T) {
 		assert.Empty(t, ddls, "Schema with multi-column FOREIGN KEY should be idempotent")
 	})
 
-	// Skipping this test as Spanner doesn't support ON DELETE in FOREIGN KEY constraints
-	// within CREATE TABLE statements. ON DELETE is only supported for INTERLEAVE relationships.
 	t.Run("ForeignKeyWithOnDelete", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("Spanner doesn't support ON DELETE in FOREIGN KEY constraints")
+		db := recreateDatabase(t, config)
+		ddl := `CREATE TABLE P(Id INT64 NOT NULL) PRIMARY KEY(Id);
+CREATE TABLE C(Id INT64 NOT NULL, PId INT64, CONSTRAINT FK FOREIGN KEY(PId) REFERENCES P(Id) ON DELETE CASCADE) PRIMARY KEY(Id)`
+		require.NotEmpty(t, applySchema(t, db, ddl, false))
+		require.Empty(t, applySchema(t, db, ddl, false))
 	})
 }
 

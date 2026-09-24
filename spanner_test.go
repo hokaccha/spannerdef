@@ -25,10 +25,16 @@ func getTestConfig(t *testing.T) Config {
 
 	host := os.Getenv("SPANNER_EMULATOR_HOST")
 	if host == "" {
+		if os.Getenv("SPANNER_REQUIRE_BACKEND") == "1" {
+			t.Fatal("SPANNER_EMULATOR_HOST is required")
+		}
 		t.Skip("SPANNER_EMULATOR_HOST not set; run `make omni-up && make test`")
 	}
 
 	if !isOmniRunning(host) {
+		if os.Getenv("SPANNER_REQUIRE_BACKEND") == "1" {
+			t.Fatalf("Spanner backend not reachable at %s", host)
+		}
 		t.Skip("Spanner Omni not reachable at " + host + "; run `make omni-up`")
 	}
 

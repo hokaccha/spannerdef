@@ -139,6 +139,23 @@ spannerdef uses Google Cloud authentication. Make sure you have:
 2. `gcloud auth application-default login` configured, or
 3. Running on Google Cloud with appropriate service account
 
+## Using wrench alongside spannerdef
+
+Exclude the migration history table from the declarative schema when using [wrench](https://github.com/cloudspannerecosystem/wrench), especially with `--enable-drop`:
+
+```yaml
+# spannerdef.yml
+skip_tables: |
+  SchemaMigrations
+```
+
+```sh
+spannerdef --project=my-project --instance=my-instance --database=my-db \
+  --config=spannerdef.yml --dry-run < schema.sql
+```
+
+If wrench uses a custom migration table, put that exact name in `skip_tables` instead. wrench's `--migration_table_name` support is on its main branch after v1.13.5; check your installed version. Use the same custom name for wrench migration and truncate commands. spannerdef does not automatically reserve table names.
+
 ## Running against Spanner Emulator / Spanner Omni
 
 spannerdef works against both the [Spanner Emulator](https://cloud.google.com/spanner/docs/emulator) and [Spanner Omni](https://cloud.google.com/spanner-omni/docs) without any code changes — just point the Google Cloud Go SDK at a local endpoint via `SPANNER_EMULATOR_HOST`.
@@ -148,7 +165,7 @@ spannerdef works against both the [Spanner Emulator](https://cloud.google.com/sp
 ```bash
 docker run -d --name spanner-emulator \
   -p 9010:9010 -p 9020:9020 \
-  gcr.io/cloud-spanner-emulator/emulator
+  gcr.io/cloud-spanner-emulator/emulator:1.5.58
 
 export SPANNER_EMULATOR_HOST=localhost:9010
 spannerdef --project=my-project --instance=my-instance --database=my-db < schema.sql
@@ -161,10 +178,10 @@ Any project/instance/database IDs are accepted; you typically create them via `g
 Spanner Omni runs the actual Spanner binary locally. In single-server mode it exposes a gRPC endpoint on port `15000` with `project=default` and `instance=default` hardcoded.
 
 ```bash
-docker run -d --network host \
+docker run -d -p 15000:15000 \
   --name spanneromni \
-  -v spanner:/spanner \
-  us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r1-beta \
+  -v spanneromni-2026-r2-1-beta:/spanner \
+  us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r2.1-beta \
   start-single-server
 
 # Create a database first
@@ -173,6 +190,8 @@ docker exec spanneromni /google/spanner/bin/spanner databases create my-db
 export SPANNER_EMULATOR_HOST=localhost:15000
 spannerdef --project=default --instance=default --database=my-db < schema.sql
 ```
+
+Omni r2.1 does not support in-place upgrades of older deployments. These examples use a new version-specific volume; keep older volumes until any needed data has been exported and migrated.
 
 Note: Spanner Omni is pre-GA and licensed for development, testing, prototyping, and demonstration only.
 
@@ -186,7 +205,7 @@ go build ./cmd/spannerdef
 
 ### Testing
 
-spannerdef's integration tests run against [Spanner Omni](https://cloud.google.com/spanner-omni/docs) — the offline single-server distribution of Spanner. Omni matches production DDL semantics (e.g. foreign keys dumped as `ALTER TABLE ADD CONSTRAINT`), which the Emulator does not.
+spannerdef's integration tests run against [Spanner Omni](https://cloud.google.com/spanner-omni/docs) — the offline single-server distribution of Spanner. The full suite runs on Omni 2026.r2.1-beta. A separate CI job runs schema regressions on Emulator 1.5.58 to catch differences in recently introduced DDL features. Neither local runtime replaces validation against your managed Spanner configuration.
 
 **Requirements**: Docker.
 

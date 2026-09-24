@@ -4,8 +4,9 @@
 OMNI_HOST      ?= localhost:15000
 OMNI_PROJECT   ?= default
 OMNI_INSTANCE  ?= default
-OMNI_IMAGE     ?= us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r1-beta
+OMNI_IMAGE     ?= us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r2.1-beta
 OMNI_CONTAINER ?= spanneromni
+OMNI_VOLUME    ?= spanneromni-2026-r2-1-beta
 
 # -parallel 80 empirically minimises wall time against Omni single-server
 # on an 8-core laptop (~80s vs ~150s at -parallel 10). Going higher starts
@@ -25,15 +26,18 @@ test:
 	go test -v -count=1 -timeout 15m -parallel $(TEST_PARALLEL) ./...
 
 omni-up:
-	docker run -d --network host --name $(OMNI_CONTAINER) \
-		-v spanner:/spanner $(OMNI_IMAGE) start-single-server
+	docker run -d -p 15000:15000 --name $(OMNI_CONTAINER) \
+		-v $(OMNI_VOLUME):/spanner $(OMNI_IMAGE) start-single-server
 	@echo "Waiting for Spanner Omni to be ready..."
-	@until docker logs $(OMNI_CONTAINER) 2>&1 | grep -q "Spanner is ready"; do sleep 2; done
+	@for i in $$(seq 1 90); do \
+		if docker logs $(OMNI_CONTAINER) 2>&1 | grep -q "Spanner is ready"; then exit 0; fi; \
+		sleep 2; \
+	done; docker logs $(OMNI_CONTAINER); exit 1
 	@echo "Spanner Omni is ready on $(OMNI_HOST)"
 
 omni-down:
 	-docker rm -f $(OMNI_CONTAINER)
-	-docker volume rm spanner
+	-docker volume rm $(OMNI_VOLUME)
 
 clean:
 	rm -rf bin/
