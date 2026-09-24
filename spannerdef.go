@@ -70,6 +70,9 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 	currentSchema = filterSchema(currentSchema, config)
 	desiredSchema = filterSchema(desiredSchema, config)
 
+	if err := validateGenerationChanges(currentSchema, desiredSchema); err != nil {
+		return nil, err
+	}
 	ddls := GenerateDDLs(currentSchema, desiredSchema)
 	return ddls, nil
 }
