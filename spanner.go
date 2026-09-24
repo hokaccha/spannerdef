@@ -49,27 +49,36 @@ type SpannerDatabase struct {
 }
 
 func NewDatabase(config Config) (*SpannerDatabase, error) {
-	ctx := context.Background()
+	return NewDatabaseContext(context.Background(), config)
+}
 
+// NewDatabaseContext allows cancellation of client construction.
+func NewDatabaseContext(ctx context.Context, config Config) (*SpannerDatabase, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Token sources outlive construction: cancelling this setup context must
+	// not poison subsequent credential refreshes on a reused client.
 	// Create Spanner client
 	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s",
 		config.ProjectID, config.InstanceID, config.DatabaseID)
 
-	opts, err := clientOptions(ctx, config)
+	opts, err := clientOptions(context.WithoutCancel(ctx), config)
 	if err != nil {
 		return nil, err
 	}
 
 	client, err := spanner.NewClient(ctx, databasePath, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Spanner client: %v", err)
+		return nil, fmt.Errorf("failed to create Spanner client: %w", err)
 	}
 
 	// Create admin client for DDL operations
 	adminClient, err := dbadmin.NewDatabaseAdminClient(ctx, opts...)
 	if err != nil {
 		client.Close()
-		return nil, fmt.Errorf("failed to create admin client: %v", err)
+		return nil, fmt.Errorf("failed to create admin client: %w", err)
 	}
 
 	return &SpannerDatabase{
@@ -83,7 +92,10 @@ func NewDatabase(config Config) (*SpannerDatabase, error) {
 }
 
 func (db *SpannerDatabase) DumpDDLs() (string, error) {
-	ctx := context.Background()
+	return db.DumpDDLsContext(context.Background())
+}
+
+func (db *SpannerDatabase) DumpDDLsContext(ctx context.Context) (string, error) {
 
 	// Get database schema
 	req := &databasepb.GetDatabaseDdlRequest{
@@ -92,7 +104,7 @@ func (db *SpannerDatabase) DumpDDLs() (string, error) {
 
 	resp, err := db.adminClient.GetDatabaseDdl(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("failed to get database DDL: %v", err)
+		return "", fmt.Errorf("failed to get database DDL: %w", err)
 	}
 
 	// Sort statements for consistent output
@@ -107,8 +119,21 @@ func (db *SpannerDatabase) ExecDDL(ddl string) error {
 	return db.ExecDDLs([]string{ddl})
 }
 
+func (db *SpannerDatabase) ExecDDLContext(ctx context.Context, ddl string) error {
+	return db.ExecDDLsContext(ctx, []string{ddl})
+}
+
 func (db *SpannerDatabase) ExecDDLs(ddls []string) error {
-	ctx := context.Background()
+	return db.ExecDDLsContext(context.Background(), ddls)
+}
+
+func (db *SpannerDatabase) ExecDDLsContext(ctx context.Context, ddls []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(ddls) == 0 {
+		return nil
+	}
 
 	req := &databasepb.UpdateDatabaseDdlRequest{
 		Database:   db.databasePath,
@@ -117,12 +142,12 @@ func (db *SpannerDatabase) ExecDDLs(ddls []string) error {
 
 	op, err := db.adminClient.UpdateDatabaseDdl(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to execute DDLs: %v", err)
+		return fmt.Errorf("failed to execute DDLs: %w", err)
 	}
 
 	// Wait for the operation to complete
 	if err := op.Wait(ctx); err != nil {
-		return fmt.Errorf("DDL operation failed: %v", err)
+		return fmt.Errorf("DDL operation failed: %w", err)
 	}
 
 	return nil
@@ -144,9 +169,15 @@ type SpannerAdminDatabase struct {
 }
 
 func NewAdminDatabase(config Config) (*SpannerAdminDatabase, error) {
-	ctx := context.Background()
+	return NewAdminDatabaseContext(context.Background(), config)
+}
 
-	opts, err := clientOptions(ctx, config)
+func NewAdminDatabaseContext(ctx context.Context, config Config) (*SpannerAdminDatabase, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	opts, err := clientOptions(context.WithoutCancel(ctx), config)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +185,7 @@ func NewAdminDatabase(config Config) (*SpannerAdminDatabase, error) {
 	// Create admin client for database operations
 	adminClient, err := dbadmin.NewDatabaseAdminClient(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create database admin client: %v", err)
+		return nil, fmt.Errorf("failed to create database admin client: %w", err)
 	}
 
 	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s",
@@ -180,13 +211,13 @@ func (db *SpannerAdminDatabase) CreateDatabase(ctx context.Context) error {
 
 	op, err := db.adminClient.CreateDatabase(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to create database: %v", err)
+		return fmt.Errorf("failed to create database: %w", err)
 	}
 
 	// Wait for the operation to complete
 	_, err = op.Wait(ctx)
 	if err != nil {
-		return fmt.Errorf("database creation failed: %v", err)
+		return fmt.Errorf("database creation failed: %w", err)
 	}
 
 	return nil
@@ -199,7 +230,7 @@ func (db *SpannerAdminDatabase) DropDatabase(ctx context.Context) error {
 
 	err := db.adminClient.DropDatabase(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to drop database: %v", err)
+		return fmt.Errorf("failed to drop database: %w", err)
 	}
 
 	return nil

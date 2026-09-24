@@ -2,6 +2,7 @@ package spannerdef
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +36,22 @@ type Database interface {
 	Close() error
 }
 
+// ContextDatabase is an optional extension; Database itself is unchanged.
+type ContextDatabase interface {
+	Database
+	DumpDDLsContext(context.Context) (string, error)
+	ExecDDLsContext(context.Context, []string) error
+}
+
 func RunDDLs(d Database, ddls []string, enableDrop bool, quiet bool) error {
+	return RunDDLsContext(context.Background(), d, ddls, enableDrop, quiet)
+}
+
+// RunDDLsContext validates the complete drop-filtered plan before execution.
+func RunDDLsContext(ctx context.Context, d Database, ddls []string, enableDrop bool, quiet bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !quiet {
 		fmt.Println("-- Apply --")
 	}
@@ -62,7 +78,14 @@ func RunDDLs(d Database, ddls []string, enableDrop bool, quiet bool) error {
 		return nil
 	}
 
-	// Execute all DDLs in batch
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if contextual, ok := d.(interface {
+		ExecDDLsContext(context.Context, []string) error
+	}); ok {
+		return contextual.ExecDDLsContext(ctx, validDDLs)
+	}
 	return d.ExecDDLs(validDDLs)
 }
 

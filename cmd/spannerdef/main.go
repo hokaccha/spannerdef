@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/hokaccha/spannerdef"
 	"github.com/jessevdk/go-flags"
@@ -14,37 +18,43 @@ var (
 	buildDate = "unknown"
 )
 
-// parseOptions parses command line options
-func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
+type commandOptions struct {
+	config  spannerdef.Config
+	options spannerdef.Options
+	timeout time.Duration
+}
+
+func parseCommand(args []string) (*commandOptions, error) {
 	var opts struct {
-		ProjectID                 string   `short:"p" long:"project" description:"Google Cloud Project ID (or set SPANNER_PROJECT_ID)" value-name:"project_id"`
-		InstanceID                string   `short:"i" long:"instance" description:"Spanner Instance ID (or set SPANNER_INSTANCE_ID)" value-name:"instance_id"`
-		DatabaseID                string   `short:"d" long:"database" description:"Spanner Database ID (or set SPANNER_DATABASE_ID)" value-name:"database_id"`
-		File                      []string `long:"file" description:"Read desired SQL from the file, rather than stdin" value-name:"sql_file" default:"-"`
-		DryRun                    bool     `long:"dry-run" description:"Don't run DDLs but just show them"`
-		Export                    bool     `long:"export" description:"Just dump the current schema to stdout"`
-		EnableDrop                bool     `long:"enable-drop" description:"Enable destructive changes such as DROP TABLE, DROP INDEX"`
-		Config                    string   `long:"config" description:"YAML file to specify: target_tables, skip_tables"`
-		ImpersonateServiceAccount string   `long:"impersonate-service-account" description:"Run as this service account using short-lived credentials from the IAM Credentials API (the caller needs roles/iam.serviceAccountTokenCreator on it)" value-name:"email"`
-		Help                      bool     `long:"help" description:"Show this help"`
-		Version                   bool     `long:"version" description:"Show this version"`
+		Timeout                   time.Duration `long:"timeout" description:"Maximum time for database operations (for example 30m; 0 disables the deadline)"`
+		ProjectID                 string        `short:"p" long:"project" description:"Google Cloud Project ID (or set SPANNER_PROJECT_ID)" value-name:"project_id"`
+		InstanceID                string        `short:"i" long:"instance" description:"Spanner Instance ID (or set SPANNER_INSTANCE_ID)" value-name:"instance_id"`
+		DatabaseID                string        `short:"d" long:"database" description:"Spanner Database ID (or set SPANNER_DATABASE_ID)" value-name:"database_id"`
+		File                      []string      `long:"file" description:"Read desired SQL from the file, rather than stdin" value-name:"sql_file" default:"-"`
+		DryRun                    bool          `long:"dry-run" description:"Don't run DDLs but just show them"`
+		Export                    bool          `long:"export" description:"Just dump the current schema to stdout"`
+		EnableDrop                bool          `long:"enable-drop" description:"Enable destructive changes such as DROP TABLE, DROP INDEX"`
+		Config                    string        `long:"config" description:"YAML file to specify: target_tables, skip_tables"`
+		ImpersonateServiceAccount string        `long:"impersonate-service-account" description:"Run as this service account using short-lived credentials from the IAM Credentials API (the caller needs roles/iam.serviceAccountTokenCreator on it)" value-name:"email"`
+		Help                      bool          `long:"help" description:"Show this help"`
+		Version                   bool          `long:"version" description:"Show this version"`
 	}
 
 	parser := flags.NewParser(&opts, flags.None)
 	parser.Usage = "[OPTIONS] < desired.sql"
 	_, err := parser.ParseArgs(args)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	if opts.Help {
 		parser.WriteHelp(os.Stdout)
-		os.Exit(0)
+		return nil, nil
 	}
 
 	if opts.Version {
 		fmt.Printf("spannerdef %s (built: %s)\n", version, buildDate)
-		os.Exit(0)
+		return nil, nil
 	}
 
 	// Use environment variables as defaults if CLI args are not provided
@@ -60,13 +70,21 @@ func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 
 	// Validate required fields
 	if opts.ProjectID == "" {
-		log.Fatal("Project ID is required. Use --project or set SPANNER_PROJECT_ID environment variable.")
+		return nil, fmt.Errorf("project ID is required; use --project or SPANNER_PROJECT_ID")
 	}
 	if opts.InstanceID == "" {
-		log.Fatal("Instance ID is required. Use --instance or set SPANNER_INSTANCE_ID environment variable.")
+		return nil, fmt.Errorf("instance ID is required; use --instance or SPANNER_INSTANCE_ID")
 	}
 	if opts.DatabaseID == "" {
-		log.Fatal("Database ID is required. Use --database or set SPANNER_DATABASE_ID environment variable.")
+		return nil, fmt.Errorf("database ID is required; use --database or SPANNER_DATABASE_ID")
+	}
+
+	if opts.Timeout < 0 {
+		return nil, fmt.Errorf("--timeout must be nonnegative")
+	}
+	generatorConfig, err := spannerdef.ParseGeneratorConfigChecked(opts.Config)
+	if err != nil {
+		return nil, err
 	}
 
 	desiredFiles := spannerdef.ParseFiles(opts.File)
@@ -75,7 +93,7 @@ func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 	if !opts.Export {
 		desiredDDLs, err = spannerdef.ReadFiles(desiredFiles)
 		if err != nil {
-			log.Fatalf("Failed to read '%v': %s", desiredFiles, err)
+			return nil, fmt.Errorf("read %v: %w", desiredFiles, err)
 		}
 	}
 
@@ -84,7 +102,7 @@ func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 		DryRun:      opts.DryRun,
 		Export:      opts.Export,
 		EnableDrop:  opts.EnableDrop,
-		Config:      spannerdef.ParseGeneratorConfig(opts.Config),
+		Config:      generatorConfig,
 	}
 
 	config := spannerdef.Config{
@@ -94,21 +112,37 @@ func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
 		ImpersonateServiceAccount: opts.ImpersonateServiceAccount,
 	}
 
-	return config, &options
+	return &commandOptions{config: config, options: options, timeout: opts.Timeout}, nil
 }
 
-func main() {
-	config, options := parseOptions(os.Args[1:])
-
-	db, err := spannerdef.NewDatabase(config)
+func runCommand(ctx context.Context, args []string) error {
+	command, err := parseCommand(args)
+	if err != nil || command == nil {
+		return err
+	}
+	if command.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, command.timeout)
+		defer cancel()
+	}
+	db, err := spannerdef.NewDatabaseContext(ctx, command.config)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
 			log.Printf("failed to close Spanner clients: %v", err)
 		}
 	}()
+	return spannerdef.RunContext(ctx, db, &command.options)
+}
 
-	spannerdef.Run(db, options)
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := runCommand(ctx, os.Args[1:])
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

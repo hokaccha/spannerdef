@@ -1,6 +1,7 @@
 package spannerdef
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -16,56 +17,68 @@ type Options struct {
 	Config      GeneratorConfig
 }
 
-// Main function shared by spannerdef command
+// Run preserves the legacy exit-on-error behavior.
+// Deprecated: use RunContext to receive errors and allow deferred cleanup.
 func Run(db Database, options *Options) {
-	currentDDLs, err := db.DumpDDLs()
-	if err != nil {
-		log.Fatalf("Error on DumpDDLs: %s", err)
+	if err := RunContext(context.Background(), db, options); err != nil {
+		log.Fatal(err)
 	}
+}
 
+// RunContext executes the command without exiting the process. Context-aware
+// databases receive ctx; legacy Database implementations remain supported but
+// their in-flight calls cannot be interrupted by this wrapper.
+func RunContext(ctx context.Context, db Database, options *Options) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var currentDDLs string
+	var err error
+	if d, ok := db.(interface {
+		DumpDDLsContext(context.Context) (string, error)
+	}); ok {
+		currentDDLs, err = d.DumpDDLsContext(ctx)
+	} else {
+		currentDDLs, err = db.DumpDDLs()
+	}
+	if err != nil {
+		return fmt.Errorf("dump DDLs: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if options.Export {
 		if currentDDLs == "" {
-			fmt.Printf("-- No schema exists --\n")
+			fmt.Println("-- No schema exists --")
 		} else {
 			fmt.Print(currentDDLs)
 		}
-		return
+		return nil
 	}
-
 	ddls, err := GenerateIdempotentDDLs(options.DesiredDDLs, currentDDLs, options.Config)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
-
 	if len(ddls) == 0 {
 		fmt.Println("-- Nothing is modified --")
-		return
+		return nil
 	}
-
 	if options.DryRun {
-		if err := showDDLs(ddls, options.EnableDrop); err != nil {
-			log.Fatal(err)
-		}
-		return
+		return showDDLs(ddls, options.EnableDrop)
 	}
-
-	err = RunDDLs(db, ddls, options.EnableDrop, false)
-	if err != nil {
-		log.Fatal(err)
-	}
+	return RunDDLsContext(ctx, db, ddls, options.EnableDrop, false)
 }
 
 // GenerateIdempotentDDLs generates DDLs to transform current schema to desired schema
 func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorConfig) ([]string, error) {
 	currentParsed, err := parseDDLs(currentDDLs, config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse current DDLs: %v", err)
+		return nil, fmt.Errorf("failed to parse current DDLs: %w", err)
 	}
 
 	desiredParsed, err := parseDDLs(desiredDDLs, config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse desired DDLs: %v", err)
+		return nil, fmt.Errorf("failed to parse desired DDLs: %w", err)
 	}
 
 	if err := validateFilteredTableNameChanges(currentParsed, desiredParsed); err != nil {
