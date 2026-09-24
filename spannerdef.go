@@ -49,9 +49,12 @@ func RunContext(ctx context.Context, db Database, options *Options) error {
 	}
 	if options.Export {
 		if currentDDLs == "" {
-			fmt.Println("-- No schema exists --")
+			_, err = fmt.Fprintln(os.Stdout, "-- No schema exists --")
 		} else {
-			fmt.Print(currentDDLs)
+			_, err = fmt.Fprint(os.Stdout, currentDDLs)
+		}
+		if err != nil {
+			return fmt.Errorf("write exported DDLs: %w", err)
 		}
 		return nil
 	}
@@ -60,7 +63,9 @@ func RunContext(ctx context.Context, db Database, options *Options) error {
 		return err
 	}
 	if len(ddls) == 0 {
-		fmt.Println("-- Nothing is modified --")
+		if _, err := fmt.Fprintln(os.Stdout, "-- Nothing is modified --"); err != nil {
+			return fmt.Errorf("write unchanged plan: %w", err)
+		}
 		return nil
 	}
 	if options.DryRun {
@@ -261,12 +266,17 @@ func showDDLs(ddls []string, enableDrop bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("-- dry run --")
+	if _, err := fmt.Fprintln(os.Stdout, "-- dry run --"); err != nil {
+		return fmt.Errorf("write dry-run plan: %w", err)
+	}
 	for _, step := range plan {
 		if step.Skip {
-			fmt.Printf("-- Skipped: %s;\n", step.SQL)
+			_, err = fmt.Fprintf(os.Stdout, "-- Skipped: %s;\n", step.SQL)
 		} else {
-			fmt.Printf("%s;\n", step.SQL)
+			_, err = fmt.Fprintf(os.Stdout, "%s;\n", step.SQL)
+		}
+		if err != nil {
+			return fmt.Errorf("write dry-run plan: %w", err)
 		}
 	}
 	return nil
