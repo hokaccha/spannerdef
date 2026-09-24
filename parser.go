@@ -33,15 +33,16 @@ type Table struct {
 
 // Column represents a table column
 type Column struct {
-	additionOrder int    // Dependency order for ALTER TABLE ADD COLUMN
-	Generation    string // Generated expression or identity clause
-	Hidden        bool
-	Name          string
-	Type          string
-	NotNull       bool
-	Default       string // For DEFAULT clause value
-	Options       string // For column options like ALLOW COMMIT TIMESTAMP
-	Order         int    // Original order in the DDL
+	generationExpr *ast.GeneratedColumnExpr // Parsed expression for semantic comparison
+	additionOrder  int                      // Dependency order for ALTER TABLE ADD COLUMN
+	Generation     string                   // Generated expression or identity clause
+	Hidden         bool
+	Name           string
+	Type           string
+	NotNull        bool
+	Default        string // For DEFAULT clause value
+	Options        string // For column options like ALLOW COMMIT TIMESTAMP
+	Order          int    // Original order in the DDL
 }
 
 // Index represents a Spanner index
@@ -177,6 +178,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 			case *ast.GeneratedColumnExpr:
 				column.Generation = expr.SQL()
 				generatedExpressions[column] = expr.Expr
+				column.generationExpr = expr
 			}
 		}
 
@@ -187,6 +189,11 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 
 		table.Columns[column.Name] = column
 		columnNames[strings.ToLower(col.Name.Name)] = column
+	}
+	for _, column := range table.Columns {
+		if column.generationExpr != nil {
+			normalizeGenerationExpression(column.generationExpr.Expr, columnNames)
+		}
 	}
 	if err := setColumnAdditionOrder(table, generatedExpressions, columnNames); err != nil {
 		return err
