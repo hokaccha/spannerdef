@@ -372,41 +372,7 @@ func formatColumnType(typeNode ast.SchemaType) string {
 
 // GenerateDDLs generates DDL statements to transform current schema to desired schema
 func GenerateDDLs(current, desired *Schema) []string {
-	var ddls []string
-
-	// 1. Drop indexes first (required before dropping tables with indexes)
-	dropIndexDDLs := generateDropIndexDDLs(current, desired)
-	ddls = append(ddls, dropIndexDDLs...)
-
-	// 2. Drop tables
-	dropTableDDLs := generateDropTableDDLs(current, desired)
-	ddls = append(ddls, dropTableDDLs...)
-
-	// Release conflicting object names before creating namespaces.
-	var schemaNames []string
-	for name := range desired.NamedSchemas {
-		if !current.NamedSchemas[name] {
-			schemaNames = append(schemaNames, name)
-		}
-	}
-	sort.Strings(schemaNames)
-	for _, name := range schemaNames {
-		ddls = append(ddls, "CREATE SCHEMA "+name)
-	}
-
-	// 3. Alter existing tables
-	alterTableDDLs := generateAlterTableDDLs(current, desired)
-	ddls = append(ddls, alterTableDDLs...)
-
-	// 4. Create new tables
-	createTableDDLs := generateCreateTableDDLs(current, desired)
-	ddls = append(ddls, createTableDDLs...)
-
-	// 5. Create new indexes
-	createIndexDDLs := generateCreateIndexDDLs(current, desired)
-	ddls = append(ddls, createIndexDDLs...)
-
-	return ddls
+	return generateOrderedDDLs(current, desired)
 }
 
 // generateDropIndexDDLs generates DDLs to drop indexes
@@ -435,57 +401,6 @@ func generateDropIndexDDLs(current, desired *Schema) []string {
 	return ddls
 }
 
-// generateDropTableDDLs generates DDLs to drop tables
-func generateDropTableDDLs(current, desired *Schema) []string {
-	var ddls []string
-
-	// Drop tables that no longer exist
-	for tableName := range current.Tables {
-		if _, exists := desired.Tables[tableName]; !exists {
-			ddls = append(ddls, fmt.Sprintf("DROP TABLE %s", tableName))
-		}
-	}
-
-	return ddls
-}
-
-// generateAlterTableDDLs generates DDLs to alter existing tables
-func generateAlterTableDDLs(current, desired *Schema) []string {
-	var ddls []string
-
-	// Alter existing tables
-	for tableName, desiredTable := range desired.Tables {
-		if currentTable, exists := current.Tables[tableName]; exists {
-			ddls = append(ddls, generateAlterTable(currentTable, desiredTable)...)
-		}
-	}
-
-	return ddls
-}
-
-// generateCreateTableDDLs generates DDLs to create new tables
-func generateCreateTableDDLs(current, desired *Schema) []string {
-	var ddls []string
-
-	// Find new tables that need to be created
-	var newTables []*Table
-	for tableName, table := range desired.Tables {
-		if _, exists := current.Tables[tableName]; !exists {
-			newTables = append(newTables, table)
-		}
-	}
-
-	// Sort tables to respect parent-child dependencies
-	sortedTables := sortTablesByDependency(newTables)
-
-	// Create tables in dependency order
-	for _, table := range sortedTables {
-		ddls = append(ddls, generateCreateTable(table))
-	}
-
-	return ddls
-}
-
 // sortTablesByDependency sorts tables to ensure parent tables come before child tables
 // and referenced tables come before tables with foreign keys
 func sortTablesByDependency(tables []*Table) []*Table {
@@ -504,6 +419,7 @@ func sortTablesByDependency(tables []*Table) []*Table {
 			return
 		}
 
+		processed[table.Name] = true
 		// If this table has a parent, process the parent first
 		if table.ParentTable != "" {
 			if parentTable, exists := tableMap[table.ParentTable]; exists {
@@ -525,6 +441,7 @@ func sortTablesByDependency(tables []*Table) []*Table {
 		processed[table.Name] = true
 	}
 
+	sort.Slice(tables, func(i, j int) bool { return tables[i].Name < tables[j].Name })
 	// Process all tables
 	for _, table := range tables {
 		processTable(table)
@@ -755,11 +672,21 @@ func generateAlterTable(current, desired *Table) []string {
 		}
 	}
 
-	// Drop columns that no longer exist
-	for colName := range current.Columns {
-		if _, exists := desired.Columns[colName]; !exists {
-			ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", desired.Name, colName))
+	// Remove generated columns before the columns they reference.
+	dropping := make([]*Column, 0)
+	for name, col := range current.Columns {
+		if desired.Columns[name] == nil {
+			dropping = append(dropping, col)
 		}
+	}
+	sort.Slice(dropping, func(i, j int) bool {
+		if dropping[i].additionOrder != dropping[j].additionOrder {
+			return dropping[i].additionOrder > dropping[j].additionOrder
+		}
+		return dropping[i].Name < dropping[j].Name
+	})
+	for _, col := range dropping {
+		ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", desired.Name, col.Name))
 	}
 
 	// Handle column type changes and OPTIONS changes

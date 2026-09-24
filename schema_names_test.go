@@ -37,9 +37,9 @@ func TestQualifiedDependenciesAndQuotedNames(t *testing.T) {
 	desired := "CREATE SCHEMA s; CREATE TABLE s.C (Id INT64 NOT NULL, N INT64, CONSTRAINT FK FOREIGN KEY(N) REFERENCES s.P(Id)) PRIMARY KEY (Id), INTERLEAVE IN PARENT s.P; CREATE TABLE s.P (Id INT64 NOT NULL) PRIMARY KEY(Id)"
 	ddls, err := GenerateIdempotentDDLs(desired, "", GeneratorConfig{})
 	require.NoError(t, err)
-	require.Len(t, ddls, 3)
+	require.Len(t, ddls, 4)
 	require.Contains(t, ddls[1], "CREATE TABLE s.P")
-	require.Contains(t, ddls[2], "REFERENCES s.P (Id)")
+	require.Contains(t, ddls[3], "REFERENCES s.P (Id)")
 	require.Contains(t, ddls[2], "INTERLEAVE IN PARENT s.P")
 	quoted := "CREATE SCHEMA `Order`; CREATE TABLE `Order`.`Select` (`From` INT64 NOT NULL) PRIMARY KEY (`From`)"
 	ddls, err = GenerateIdempotentDDLs(quoted, "", GeneratorConfig{})
