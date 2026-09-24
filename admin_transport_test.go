@@ -203,3 +203,30 @@ func TestAdminOnlyConstructor(t *testing.T) {
 		require.ErrorContains(t, err, "invalid database name")
 	}
 }
+
+func TestCancellationDuringOperationWaitStopsLaterBatches(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	submissions := 0
+	service := &transportServer{
+		update: func(_ context.Context, r *databasepb.UpdateDatabaseDdlRequest) (*longrunningpb.Operation, error) {
+			submissions++
+			return &longrunningpb.Operation{Name: r.Database + "/operations/" + r.OperationId}, nil
+		},
+		get: func(context.Context, *longrunningpb.GetOperationRequest) (*longrunningpb.Operation, error) {
+			cancel()
+			return nil, status.Error(codes.Canceled, "wait cancelled")
+		},
+	}
+	db := transportDB(t, service)
+	var statements []string
+	for i := range 11 {
+		statements = append(statements, fmt.Sprintf("CREATE INDEX I%d ON T(Id)", i))
+	}
+	err := db.ExecDDLsContext(ctx, statements)
+	require.True(t, errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled, "%v", err)
+	var operationErr *DDLOperationError
+	require.ErrorAs(t, err, &operationErr)
+	require.Contains(t, operationErr.OperationName, db.databasePath+"/operations/spannerdef_")
+	require.Equal(t, 1, submissions)
+}

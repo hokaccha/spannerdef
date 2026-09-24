@@ -125,6 +125,10 @@ func runCommand(ctx context.Context, args []string) error {
 	if err != nil || command == nil {
 		return err
 	}
+	// Keep the default signal behavior while reading potentially blocking input.
+	// Once clients can be created, cancellation lets their deferred cleanup run.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	if command.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, command.timeout)
@@ -148,9 +152,7 @@ func runCommand(ctx context.Context, args []string) error {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := runCommand(ctx, os.Args[1:])
-	stop()
+	err := runCommand(context.Background(), os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

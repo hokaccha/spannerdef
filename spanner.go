@@ -12,7 +12,8 @@ import (
 	"google.golang.org/api/option"
 )
 
-// clientOptions returns authentication options for admin clients. Without impersonation it returns nil, so the libraries fall back to
+// clientOptions returns authentication options for admin clients.
+// Without impersonation it returns nil, so the libraries fall back to
 // their defaults (Application Default Credentials, or the emulator when
 // SPANNER_EMULATOR_HOST is set). With impersonation it mints short-lived
 // credentials for the target service account through the IAM Credentials API
@@ -55,8 +56,6 @@ func NewDatabaseContext(ctx context.Context, config Config, options ...DatabaseO
 		return nil, err
 	}
 
-	// Token sources outlive construction: cancelling this setup context must
-	// not poison subsequent credential refreshes on a reused client.
 	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s",
 		config.ProjectID, config.InstanceID, config.DatabaseID)
 
@@ -68,6 +67,8 @@ func NewDatabaseContext(ctx context.Context, config Config, options ...DatabaseO
 		}
 	}
 
+	// Token sources outlive construction: cancelling this setup context must
+	// not poison subsequent credential refreshes on a reused client.
 	opts, err := clientOptions(context.WithoutCancel(ctx), config)
 	if err != nil {
 		return nil, err
