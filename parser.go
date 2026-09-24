@@ -13,6 +13,7 @@ import (
 
 // Schema represents a database schema
 type Schema struct {
+	Objects      map[string]*SchemaObject
 	NamedSchemas map[string]bool
 	Tables       map[string]*Table
 	Indexes      map[string]*Index
@@ -79,6 +80,7 @@ func ParseDDLs(ddls string) (*Schema, error) {
 
 func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	schema := &Schema{
+		Objects:      make(map[string]*SchemaObject),
 		NamedSchemas: make(map[string]bool),
 		Tables:       make(map[string]*Table),
 		Indexes:      make(map[string]*Index),
@@ -117,6 +119,16 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	// precede their own ALTERs (in particular, spanner.DumpDDLs sorts them
 	// alphabetically, which puts ALTER before CREATE).
 	for _, stmt := range parsed {
+		if object := schemaObject(stmt); object != nil {
+			if err := normalizeObject(object); err != nil {
+				return nil, err
+			}
+			if schema.Objects[object.Name] != nil {
+				return nil, fmt.Errorf("duplicate object %s", object.Name)
+			}
+			schema.Objects[object.Name] = object
+			continue
+		}
 		switch s := stmt.(type) {
 		case *ast.CreateSchema:
 			if s.OrReplace {
@@ -142,6 +154,26 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 			if err := processAlterTable(schema, s); err != nil {
 				return nil, fmt.Errorf("failed to process statement: %v", err)
 			}
+		}
+	}
+
+	for _, object := range schema.Objects {
+		if stream, ok := object.definition.(*ast.CreateChangeStream); ok {
+			if targets, ok := stream.For.(*ast.ChangeStreamForTables); ok {
+				for _, target := range targets.Tables {
+					if table := tableByKey(schema, target.TableName.SQL()); table != nil {
+						target.TableName = &ast.Ident{Name: tableFilterName(table.Name)}
+						for i, name := range target.Columns {
+							if column := columnByKey(table, name.SQL()); column != nil {
+								target.Columns[i] = &ast.Ident{Name: tableFilterName(column.Name)}
+							}
+						}
+					}
+				}
+			}
+		}
+		if err := normalizeGraph(object, schema); err != nil {
+			return nil, err
 		}
 	}
 
@@ -373,9 +405,11 @@ func formatColumnType(typeNode ast.SchemaType) string {
 	return typeNode.SQL()
 }
 
-// GenerateDDLs generates DDL statements to transform current schema to desired schema
+// GenerateDDLs generates DDL statements for validated schemas.
+// Deprecated: use GenerateDDLsChecked to receive dependency validation errors.
 func GenerateDDLs(current, desired *Schema) []string {
-	return generateOrderedDDLs(current, desired)
+	ddls, _ := GenerateDDLsChecked(current, desired)
+	return ddls
 }
 
 // generateDropIndexDDLs generates DDLs to drop indexes

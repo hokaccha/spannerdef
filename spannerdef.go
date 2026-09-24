@@ -107,18 +107,28 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 	if err := validateKeyChanges(currentSchema, desiredSchema); err != nil {
 		return nil, err
 	}
-	ddls := GenerateDDLs(currentSchema, desiredSchema)
-	return ddls, nil
+	return generateObjectDDLs(currentSchema, desiredSchema)
 }
 
 // filterSchema applies target/skip table filters
 func filterSchema(s *Schema, config GeneratorConfig) *Schema {
 	filtered := &Schema{
+		Objects:      make(map[string]*SchemaObject),
 		NamedSchemas: make(map[string]bool),
 		Tables:       make(map[string]*Table),
 		Indexes:      make(map[string]*Index),
 	}
 
+	// Non-table objects are managed globally; table filters apply to indexes
+	// attached to those tables, not to views, streams, graphs or sequences.
+	for name, object := range s.Objects {
+		if object.TableName == "" || shouldIncludeTable(object.TableName, config) {
+			filtered.Objects[name] = object
+			if s.NamedSchemas[object.SchemaName] {
+				filtered.NamedSchemas[object.SchemaName] = true
+			}
+		}
+	}
 	// Filter tables
 	for name, table := range s.Tables {
 		if shouldIncludeTable(name, config) {

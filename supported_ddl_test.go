@@ -2,17 +2,12 @@ package spannerdef
 
 import (
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 )
 
 func TestUnsupportedDDLDoesNotProducePartialPlans(t *testing.T) {
 	for _, sql := range []string{
-		"CREATE VIEW V SQL SECURITY INVOKER AS SELECT 1 AS N",
-		"CREATE SEQUENCE S OPTIONS (sequence_kind = 'bit_reversed_positive')",
-		"CREATE CHANGE STREAM C FOR ALL",
-		"CREATE SEARCH INDEX SI ON T(Tokens)",
-		"CREATE VECTOR INDEX VI ON T(Embedding) WHERE Embedding IS NOT NULL OPTIONS (distance_type = 'COSINE')",
-		"CREATE PROPERTY GRAPH G NODE TABLES(T)",
 		"ALTER DATABASE db SET OPTIONS (columnar_policy = 'enabled')",
 		"CREATE TABLE T (Id INT64 NOT NULL) PRIMARY KEY (Id), OPTIONS (columnar_policy = 'enabled')",
 		"CREATE INDEX IX ON T(Id) OPTIONS (columnar_policy = 'enabled')",
@@ -63,10 +58,14 @@ func TestUnsupportedDDLRespectsTableFilters(t *testing.T) {
 				}
 			}
 			_, err := ParseDDLs(excluded)
-			require.Error(t, err, "standalone parsing must still reject unsupported statements")
+			if strings.Contains(excluded, "SEARCH INDEX") || strings.Contains(excluded, "VECTOR INDEX") {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err, "standalone parsing must still reject unsupported statements")
+			}
 		})
 	}
-	ddls, err := GenerateIdempotentDDLs(desired, current+"CREATE SEQUENCE S OPTIONS (sequence_kind = 'bit_reversed_positive')", GeneratorConfig{TargetTables: []string{"Managed"}})
+	ddls, err := GenerateIdempotentDDLs(desired, current+"CREATE MODEL M INPUT (x FLOAT64) OUTPUT (y FLOAT64) REMOTE OPTIONS (endpoint = 'https://example.com')", GeneratorConfig{TargetTables: []string{"Managed"}})
 	require.ErrorContains(t, err, "unsupported")
 	require.Empty(t, ddls)
 }
