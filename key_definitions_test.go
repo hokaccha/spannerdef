@@ -55,3 +55,20 @@ func TestKeyDefinitionChangesAreNotIgnored(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, ddls)
 }
+
+func TestStoringColumnOrderDoesNotChangeIndex(t *testing.T) {
+	table := "CREATE TABLE T (Id INT64 NOT NULL, N INT64, A INT64, B INT64, C INT64) PRIMARY KEY(Id);"
+	current := table + "CREATE INDEX IX ON T(N) STORING(A, B)"
+	desired := table + "CREATE INDEX IX ON T(N) STORING(B, A)"
+	ddls, err := GenerateIdempotentDDLs(desired, current, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Empty(t, ddls)
+	ddls, err = GenerateIdempotentDDLs(desired, table, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"CREATE INDEX IX ON T (N) STORING (B, A)"}, ddls)
+	for _, columns := range []string{"A", "B, C", "A, B, C"} {
+		ddls, err = GenerateIdempotentDDLs(table+"CREATE INDEX IX ON T(N) STORING("+columns+")", current, GeneratorConfig{})
+		require.ErrorContains(t, err, "unsupported definition change")
+		require.Empty(t, ddls)
+	}
+}

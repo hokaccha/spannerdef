@@ -23,9 +23,17 @@ func validateKeyChanges(current, desired *Schema) error {
 	}
 	for name, next := range desired.Indexes {
 		if prev, ok := current.Indexes[name]; ok &&
-			(prev.TableName != next.TableName || prev.Unique != next.Unique || prev.NullFiltered != next.NullFiltered || !slices.Equal(prev.Columns, next.Columns) || !slices.Equal(prev.Storing, next.Storing)) {
+			(prev.TableName != next.TableName || prev.Unique != next.Unique || prev.NullFiltered != next.NullFiltered || !slices.Equal(prev.Columns, next.Columns) || !sameStoredColumns(prev.Storing, next.Storing)) {
 			return fmt.Errorf("unsupported definition change for index %s; migrate the index explicitly", name)
 		}
 	}
 	return nil
+}
+
+func sameStoredColumns(a, b []string) bool {
+	a = slices.Clone(a)
+	b = slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
 }
