@@ -36,6 +36,24 @@ func planDDLs(ddls []string, enableDrop bool) ([]plannedDDL, error) {
 		skip := false
 		if !enableDrop {
 			switch n := node.(type) {
+			case *ast.DropView:
+				skip = true
+				skippedNames[strings.ToLower(n.Name.SQL())] = true
+			case *ast.DropSequence:
+				skip = true
+				skippedNames[strings.ToLower(n.Name.SQL())] = true
+			case *ast.DropSearchIndex:
+				skip = true
+				skippedNames[strings.ToLower(n.Name.SQL())] = true
+			case *ast.DropVectorIndex:
+				skip = true
+				skippedNames[strings.ToLower(n.Name.SQL())] = true
+			case *ast.DropChangeStream:
+				skip = true
+				skippedNames[strings.ToLower(n.Name.SQL())] = true
+			case *ast.DropPropertyGraph:
+				skip = true
+				skippedNames[strings.ToLower(n.Name.SQL())] = true
 			case *ast.DropTable:
 				skip = true
 				skippedNames[strings.ToLower(n.Name.SQL())] = true
@@ -61,6 +79,19 @@ func planDDLs(ddls []string, enableDrop bool) ([]plannedDDL, error) {
 	// Reject before sending any batch rather than failing after partial changes.
 	for _, node := range nodes {
 		var names []string
+		copyNode, _ := memefish.ParseDDL("", node.SQL())
+		if object := schemaObject(copyNode); object != nil {
+			names = append(names, object.Name)
+			if hasSkippedDrop {
+				return nil, fmt.Errorf("creating or replacing %s may require skipped drops; use --enable-drop", object.Name)
+			}
+		}
+		if hasSkippedDrop {
+			switch node.(type) {
+			case *ast.AlterSequence, *ast.AlterChangeStream:
+				return nil, fmt.Errorf("altering schema objects may require skipped drops; use --enable-drop")
+			}
+		}
 		switch n := node.(type) {
 		case *ast.CreateSchema:
 			names = append(names, n.Name.SQL())

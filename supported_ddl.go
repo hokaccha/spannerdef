@@ -44,7 +44,7 @@ func ddlTableName(stmt ast.DDL) string {
 	case *ast.CreateSearchIndex:
 		return getPathName(s.TableName)
 	case *ast.CreateVectorIndex:
-		return s.TableName.Name
+		return s.TableName.SQL()
 	default:
 		return ""
 	}

@@ -16,6 +16,7 @@ Idempotent Google Cloud Spanner schema management by SQL, inspired by [sqldef](h
 - **Columns**: add/drop columns, change supported types, defaults, nullability, and options; preserve generated, identity, hidden, and ON UPDATE definitions
 - **Indexes**: create/drop regular, unique, null-filtered, and expression indexes; preserve key directions and STORING columns
 - **Constraints**: add/drop/recreate CHECK and foreign key constraints, including enforcement and ON DELETE actions
+- **Schema objects**: sequences, views, search/vector indexes, change streams, property graphs (see support boundaries below)
 - **TTL**: add/replace/drop row deletion policies, including zero-day policies
 
 Desired schema files use CREATE declarations (and ALTER TABLE ADD CONSTRAINT as emitted by Spanner exports). They are schema descriptions, not a sequential migration script. Unsupported statements and definition changes return errors before execution.
@@ -255,3 +256,17 @@ spannerdef is built with the following components:
 ## License
 
 MIT
+
+### Additional GoogleSQL schema objects
+
+Desired schema files can declare `CREATE SEQUENCE`, `CREATE VIEW`, `CREATE SEARCH INDEX`, `CREATE VECTOR INDEX`, `CREATE CHANGE STREAM`, and `CREATE PROPERTY GRAPH`. Definitions retain their parsed clauses and are compared after normalization. Creation and removal follow dependencies, including sequence defaults, views over views, graph sources and search index base tables.
+
+- Sequences use `OPTIONS` syntax. Changed options use `ALTER SEQUENCE`; omitting an initial `start_with_counter` does not reset a running sequence. Removing skip-range options resets them with `NULL`.
+- View and graph changes use `CREATE OR REPLACE`. Search/vector index changes rebuild the index. Structural column changes also rebuild dependent views, graphs and search/vector indexes, including indirect view dependencies. Rebuilds require `--enable-drop`.
+- Change streams use `ALTER ... SET FOR`, `DROP FOR ALL`, and `SET OPTIONS`, retaining existing history. If changing an explicit tracking list both requires new columns and releases a table or explicitly tracked column being dropped, split the migration into separate steps. The planner does not silently suspend capture. `FOR ALL` continues to follow schema changes automatically.
+- All six object kinds obey `--enable-drop`. Mixed plans that require skipped removals fail before execution. Dropping a change stream deletes its history; dropping a sequence discards its state.
+- `target_tables` and `skip_tables` also filter search/vector indexes by their base table. Sequences, views, change streams and graphs are managed globally and must remain in the desired schema if they should be retained. Graph shorthand keys and properties require the source table in the managed schema; use explicit keys and properties for views or excluded tables.
+
+Support is limited to GoogleSQL syntax understood by the pinned memefish parser. In particular, sequence declarations require an `OPTIONS` clause, and qualified names for vector indexes, change streams and graph elements, and newer graph semantic options are not yet accepted by that parser. Other object kinds (queues, models, functions, proto bundles, locality groups and roles/grants) remain unsupported and produce errors. Cross-kind renames/replacements require separate migrations. Use `GenerateDDLsChecked` or `GenerateIdempotentDDLs` when embedding the generator so dependency errors are returned to the caller.
+
+The integration suite checks object creation, changes, deletion and export round trips against Omni and Emulator. Emulator 1.5.58 exports graph property names without their derived expressions and omits `NO PROPERTIES` and dynamic label/property clauses; the complex graph round-trip case runs on Omni, which preserves those definitions. This emulator limitation is not treated as expression equivalence by the generator.
