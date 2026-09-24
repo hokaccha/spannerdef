@@ -157,3 +157,25 @@ func TestFreshSubmissionsHaveDifferentIDs(t *testing.T) {
 	require.NotEqual(t, ids[0], ids[1])
 	require.False(t, strings.Contains(ids[0], "-"))
 }
+
+func TestExportPreservesServerOrder(t *testing.T) {
+	statements := []string{
+		"CREATE TABLE T(Id INT64) PRIMARY KEY(Id)",
+		"CREATE INDEX I ON T(Id)",
+		"ALTER TABLE T ADD CONSTRAINT C CHECK(Id > 0)",
+	}
+	service := &transportServer{dump: func(context.Context, *databasepb.GetDatabaseDdlRequest) (*databasepb.GetDatabaseDdlResponse, error) {
+		return &databasepb.GetDatabaseDdlResponse{Statements: statements}, nil
+	}}
+	db := transportDB(t, service)
+	dump, err := db.DumpDDLs()
+	require.NoError(t, err)
+	require.Equal(t, strings.Join(statements, ";\n\n")+";", dump)
+	ddls, err := GenerateIdempotentDDLs(dump, dump, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Empty(t, ddls)
+	statements = nil
+	dump, err = db.DumpDDLs()
+	require.NoError(t, err)
+	require.Equal(t, ";", dump)
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"cloud.google.com/go/spanner"
@@ -114,12 +113,9 @@ func (db *SpannerDatabase) DumpDDLsContext(ctx context.Context) (string, error) 
 		return "", fmt.Errorf("failed to get database DDL: %w", err)
 	}
 
-	// Sort statements for consistent output
-	statements := make([]string, len(resp.Statements))
-	copy(statements, resp.Statements)
-	sort.Strings(statements)
-
-	return strings.Join(statements, ";\n\n") + ";", nil
+	// Preserve the server's statement order; alphabetical sorting can put
+	// indexes and ALTER statements before the tables they depend on.
+	return strings.Join(resp.Statements, ";\n\n") + ";", nil
 }
 
 func (db *SpannerDatabase) ExecDDL(ddl string) error {
