@@ -105,3 +105,53 @@ func TestGeneratedColumnForwardDependencies(t *testing.T) {
 	require.ErrorContains(t, err, "cyclic generated column dependency")
 	require.Empty(t, ddls)
 }
+
+func TestGeneratedColumnsIgnoreNonReferenceIdentifiers(t *testing.T) {
+	for _, columns := range []string{
+		"D DATE, Year INT64 AS (EXTRACT(YEAR FROM D)) STORED",
+		"D DATE, Day INT64 AS (DATE_DIFF(D, DATE '2020-01-01', DAY)) STORED",
+		"D DATE, Month DATE AS (DATE_TRUNC(D, MONTH)) STORED",
+		"J JSON, Foo JSON AS ((J).Foo) STORED",
+		"N INT64 AS (WITH(N AS Id + 1, N + 1)) STORED",
+		"N ARRAY<INT64> AS (ARRAY_TRANSFORM([Id], N -> N + 1)) STORED",
+	} {
+		t.Run(columns, func(t *testing.T) {
+			current := "CREATE TABLE T (Id INT64 NOT NULL, " + columns + ") PRIMARY KEY(Id)"
+			desired := strings.Replace(current, "Id INT64 NOT NULL,", "Id INT64 NOT NULL, Extra INT64,", 1)
+			ddls, err := GenerateIdempotentDDLs(desired, current, GeneratorConfig{})
+			require.NoError(t, err)
+			require.Equal(t, []string{"ALTER TABLE T ADD COLUMN Extra INT64"}, ddls)
+		})
+	}
+}
+
+func TestEquivalentGeneratedExpressions(t *testing.T) {
+	table := func(expr string) string {
+		return "CREATE TABLE T (Id INT64 NOT NULL, N INT64 AS (" + expr + ") STORED) PRIMARY KEY(Id)"
+	}
+	for _, pair := range [][2]string{
+		{"ABS(Id)", "abs(Id)"}, {"ABS(Id)", "ABS(id)"}, {"Id + 1", "((id + 1))"},
+		{"ABS(Id + 1)", "abs(((id + 1)))"}, {"Id * (Id + 1)", "(id) * ((id + 1))"},
+	} {
+		current := table(pair[0])
+		desired := strings.Replace(table(pair[1]), "Id INT64 NOT NULL,", "Id INT64 NOT NULL, Extra INT64,", 1)
+		ddls, err := GenerateIdempotentDDLs(desired, current, GeneratorConfig{})
+		require.NoError(t, err)
+		require.Equal(t, []string{"ALTER TABLE T ADD COLUMN Extra INT64"}, ddls)
+	}
+	for _, pair := range [][2]string{
+		{"Id * (Id + 1)", "Id * Id + 1"}, {"Id - (Id - 1)", "(Id - Id) - 1"},
+		{"ABS(Id)", "SIGN(Id)"}, {"LENGTH('A') + Id", "LENGTH('a') + Id"},
+	} {
+		ddls, err := GenerateIdempotentDDLs(table(pair[1]), table(pair[0]), GeneratorConfig{})
+		require.ErrorContains(t, err, "unsupported generation or visibility change")
+		require.Empty(t, ddls)
+	}
+	current := "CREATE TABLE T (Id INT64 NOT NULL, J JSON, N JSON AS (J.Foo) STORED) PRIMARY KEY(Id)"
+	ddls, err := GenerateIdempotentDDLs(strings.Replace(current, "J.Foo", "J.foo", 1), current, GeneratorConfig{})
+	require.ErrorContains(t, err, "unsupported generation or visibility change")
+	require.Empty(t, ddls)
+	ddls, err = GenerateIdempotentDDLs(strings.Replace(current, " STORED", "", 1), current, GeneratorConfig{})
+	require.ErrorContains(t, err, "unsupported generation or visibility change")
+	require.Empty(t, ddls)
+}
