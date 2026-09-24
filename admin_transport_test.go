@@ -179,3 +179,27 @@ func TestExportPreservesServerOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ";", dump)
 }
+
+func TestAdminOnlyConstructor(t *testing.T) {
+	// No server is listening here: construction must not need a data session.
+	t.Setenv("SPANNER_EMULATOR_HOST", "localhost:1")
+	config := Config{ProjectID: "p", InstanceID: "i", DatabaseID: "d"}
+	ctx, cancel := context.WithCancel(context.Background())
+	db, err := NewDatabaseContext(ctx, config)
+	require.NoError(t, err)
+	cancel()
+	require.NoError(t, db.Close())
+	_, err = NewDatabaseContext(ctx, config)
+	require.ErrorIs(t, err, context.Canceled)
+	for _, invalid := range []Config{
+		{ProjectID: "", InstanceID: "i", DatabaseID: "d"},
+		{ProjectID: "p", InstanceID: "", DatabaseID: "d"},
+		{ProjectID: "p", InstanceID: "i", DatabaseID: ""},
+		{ProjectID: "p/x", InstanceID: "i", DatabaseID: "d"},
+		{ProjectID: "p", InstanceID: "i/x", DatabaseID: "d"},
+		{ProjectID: "p", InstanceID: "i", DatabaseID: "d/x"},
+	} {
+		_, err = NewDatabase(invalid)
+		require.ErrorContains(t, err, "invalid database name")
+	}
+}

@@ -6,15 +6,13 @@ import (
 	"os"
 	"strings"
 
-	"cloud.google.com/go/spanner"
 	dbadmin "cloud.google.com/go/spanner/admin/database/apiv1"
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/option"
 )
 
-// clientOptions returns the client options shared by the data and admin
-// clients. Without impersonation it returns nil, so the libraries fall back to
+// clientOptions returns authentication options for admin clients. Without impersonation it returns nil, so the libraries fall back to
 // their defaults (Application Default Credentials, or the emulator when
 // SPANNER_EMULATOR_HOST is set). With impersonation it mints short-lived
 // credentials for the target service account through the IAM Credentials API
@@ -40,7 +38,6 @@ func clientOptions(ctx context.Context, config Config, base ...option.ClientOpti
 
 type SpannerDatabase struct {
 	operationObserver func(string)
-	client            *spanner.Client
 	adminClient       *dbadmin.DatabaseAdminClient
 	projectID         string
 	instanceID        string
@@ -60,29 +57,29 @@ func NewDatabaseContext(ctx context.Context, config Config, options ...DatabaseO
 
 	// Token sources outlive construction: cancelling this setup context must
 	// not poison subsequent credential refreshes on a reused client.
-	// Create Spanner client
 	databasePath := fmt.Sprintf("projects/%s/instances/%s/databases/%s",
 		config.ProjectID, config.InstanceID, config.DatabaseID)
+
+	// Retain the path validation previously performed by the data client,
+	// without opening a session or starting its background workers.
+	for _, component := range []string{config.ProjectID, config.InstanceID, config.DatabaseID} {
+		if component == "" || strings.Contains(component, "/") {
+			return nil, fmt.Errorf("invalid database name %q: project, instance, and database IDs must be nonempty path components", databasePath)
+		}
+	}
 
 	opts, err := clientOptions(context.WithoutCancel(ctx), config)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := spanner.NewClient(ctx, databasePath, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Spanner client: %w", err)
-	}
-
 	// Create admin client for DDL operations
 	adminClient, err := dbadmin.NewDatabaseAdminClient(ctx, opts...)
 	if err != nil {
-		client.Close()
 		return nil, fmt.Errorf("failed to create admin client: %w", err)
 	}
 
 	db := &SpannerDatabase{
-		client:       client,
 		adminClient:  adminClient,
 		projectID:    config.ProjectID,
 		instanceID:   config.InstanceID,
@@ -150,7 +147,6 @@ func (db *SpannerDatabase) ExecDDLsContext(ctx context.Context, ddls []string) e
 }
 
 func (db *SpannerDatabase) Close() error {
-	db.client.Close()
 	return db.adminClient.Close()
 }
 
