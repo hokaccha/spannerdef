@@ -40,12 +40,13 @@ func clientOptions(ctx context.Context, config Config, base ...option.ClientOpti
 }
 
 type SpannerDatabase struct {
-	client       *spanner.Client
-	adminClient  *dbadmin.DatabaseAdminClient
-	projectID    string
-	instanceID   string
-	databaseID   string
-	databasePath string
+	operationObserver func(string)
+	client            *spanner.Client
+	adminClient       *dbadmin.DatabaseAdminClient
+	projectID         string
+	instanceID        string
+	databaseID        string
+	databasePath      string
 }
 
 func NewDatabase(config Config) (*SpannerDatabase, error) {
@@ -53,7 +54,7 @@ func NewDatabase(config Config) (*SpannerDatabase, error) {
 }
 
 // NewDatabaseContext allows cancellation of client construction.
-func NewDatabaseContext(ctx context.Context, config Config) (*SpannerDatabase, error) {
+func NewDatabaseContext(ctx context.Context, config Config, options ...DatabaseOption) (*SpannerDatabase, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -81,14 +82,20 @@ func NewDatabaseContext(ctx context.Context, config Config) (*SpannerDatabase, e
 		return nil, fmt.Errorf("failed to create admin client: %w", err)
 	}
 
-	return &SpannerDatabase{
+	db := &SpannerDatabase{
 		client:       client,
 		adminClient:  adminClient,
 		projectID:    config.ProjectID,
 		instanceID:   config.InstanceID,
 		databaseID:   config.DatabaseID,
 		databasePath: databasePath,
-	}, nil
+	}
+	for _, option := range options {
+		if option != nil {
+			option(db)
+		}
+	}
+	return db, nil
 }
 
 func (db *SpannerDatabase) DumpDDLs() (string, error) {
@@ -135,22 +142,7 @@ func (db *SpannerDatabase) ExecDDLsContext(ctx context.Context, ddls []string) e
 		return nil
 	}
 
-	req := &databasepb.UpdateDatabaseDdlRequest{
-		Database:   db.databasePath,
-		Statements: ddls,
-	}
-
-	op, err := db.adminClient.UpdateDatabaseDdl(ctx, req)
-	if err != nil {
-		return fmt.Errorf("failed to execute DDLs: %w", err)
-	}
-
-	// Wait for the operation to complete
-	if err := op.Wait(ctx); err != nil {
-		return fmt.Errorf("DDL operation failed: %w", err)
-	}
-
-	return nil
+	return db.executeDDLBatch(ctx, ddls)
 }
 
 func (db *SpannerDatabase) Close() error {

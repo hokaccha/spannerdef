@@ -311,3 +311,15 @@ func TestCommandErrorsAndDeadline(t *testing.T) {
 		require.NoError(t, runCommand(context.Background(), []string{flag}))
 	}
 }
+
+func TestResumeParsing(t *testing.T) {
+	base := []string{"--project=p", "--instance=i", "--database=d", "--resume-operation=projects/p/instances/i/databases/d/operations/test"}
+	command, err := parseCommand(base)
+	require.NoError(t, err)
+	require.Empty(t, command.options.DesiredDDLs)
+	require.NotEmpty(t, command.resumeOperation)
+	for _, flag := range []string{"--export", "--dry-run", "--enable-drop", "--file=-", "--config=config.yml"} {
+		_, err := parseCommand(append(append([]string{}, base...), flag))
+		require.ErrorContains(t, err, "cannot be combined")
+	}
+}

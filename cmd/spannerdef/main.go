@@ -19,13 +19,15 @@ var (
 )
 
 type commandOptions struct {
-	config  spannerdef.Config
-	options spannerdef.Options
-	timeout time.Duration
+	resumeOperation string
+	config          spannerdef.Config
+	options         spannerdef.Options
+	timeout         time.Duration
 }
 
 func parseCommand(args []string) (*commandOptions, error) {
 	var opts struct {
+		ResumeOperation           string        `long:"resume-operation" description:"Wait for an existing DDL operation without submitting a new plan"`
 		Timeout                   time.Duration `long:"timeout" description:"Maximum time for database operations (for example 30m; 0 disables the deadline)"`
 		ProjectID                 string        `short:"p" long:"project" description:"Google Cloud Project ID (or set SPANNER_PROJECT_ID)" value-name:"project_id"`
 		InstanceID                string        `short:"i" long:"instance" description:"Spanner Instance ID (or set SPANNER_INSTANCE_ID)" value-name:"instance_id"`
@@ -79,6 +81,9 @@ func parseCommand(args []string) (*commandOptions, error) {
 		return nil, fmt.Errorf("database ID is required; use --database or SPANNER_DATABASE_ID")
 	}
 
+	if opts.ResumeOperation != "" && (opts.Export || opts.DryRun || opts.EnableDrop || opts.Config != "" || (parser.FindOptionByLongName("file").IsSet() && !parser.FindOptionByLongName("file").IsSetDefault())) {
+		return nil, fmt.Errorf("--resume-operation cannot be combined with --export, --dry-run, --enable-drop, --config, or --file")
+	}
 	if opts.Timeout < 0 {
 		return nil, fmt.Errorf("--timeout must be nonnegative")
 	}
@@ -90,7 +95,7 @@ func parseCommand(args []string) (*commandOptions, error) {
 	desiredFiles := spannerdef.ParseFiles(opts.File)
 
 	var desiredDDLs string
-	if !opts.Export {
+	if !opts.Export && opts.ResumeOperation == "" {
 		desiredDDLs, err = spannerdef.ReadFiles(desiredFiles)
 		if err != nil {
 			return nil, fmt.Errorf("read %v: %w", desiredFiles, err)
@@ -112,7 +117,7 @@ func parseCommand(args []string) (*commandOptions, error) {
 		ImpersonateServiceAccount: opts.ImpersonateServiceAccount,
 	}
 
-	return &commandOptions{config: config, options: options, timeout: opts.Timeout}, nil
+	return &commandOptions{config: config, options: options, timeout: opts.Timeout, resumeOperation: opts.ResumeOperation}, nil
 }
 
 func runCommand(ctx context.Context, args []string) error {
@@ -125,7 +130,9 @@ func runCommand(ctx context.Context, args []string) error {
 		ctx, cancel = context.WithTimeout(ctx, command.timeout)
 		defer cancel()
 	}
-	db, err := spannerdef.NewDatabaseContext(ctx, command.config)
+	db, err := spannerdef.NewDatabaseContext(ctx, command.config, spannerdef.WithDDLOperationObserver(func(name string) {
+		fmt.Fprintf(os.Stderr, "DDL operation: %s\n", name)
+	}))
 	if err != nil {
 		return err
 	}
@@ -134,6 +141,9 @@ func runCommand(ctx context.Context, args []string) error {
 			log.Printf("failed to close Spanner clients: %v", err)
 		}
 	}()
+	if command.resumeOperation != "" {
+		return db.WaitDDLOperation(ctx, command.resumeOperation)
+	}
 	return spannerdef.RunContext(ctx, db, &command.options)
 }
 
