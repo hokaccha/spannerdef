@@ -26,3 +26,35 @@ func TestReadFilesPreservesSQLLineBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckedConfigRejectsUnrecognizedInput(t *testing.T) {
+	for _, content := range []string{
+		"skip_table: |\n  SchemaMigrations\n",
+		"targetTables: Users\n",
+		"skip_tables: Users\n---\nskip_tables: Other\n",
+		"skip_tables: Users\n---\n",
+		"skip_tables: [Users]\n",
+		"skip_tables: Users\nskip_tables: Other\n",
+	} {
+		t.Run(content, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "config.yml")
+			require.NoError(t, os.WriteFile(p, []byte(content), 0600))
+			_, err := ParseGeneratorConfigChecked(p)
+			require.Error(t, err)
+		})
+	}
+}
+func TestCheckedConfigPreservesValidConfiguration(t *testing.T) {
+	for _, content := range []string{"", "# comment\n", "---\n", "skip_tables: |\n  SchemaMigrations\n  s.Other\n"} {
+		p := filepath.Join(t.TempDir(), "config.yml")
+		require.NoError(t, os.WriteFile(p, []byte(content), 0600))
+		actual, err := ParseGeneratorConfigChecked(p)
+		require.NoError(t, err)
+		require.Equal(t, ParseGeneratorConfig(p), actual)
+		if len(content) > 20 {
+			require.Equal(t, []string{"SchemaMigrations", "s.Other"}, actual.SkipTables)
+		}
+	}
+	_, err := ParseGeneratorConfigChecked(filepath.Join(t.TempDir(), "missing"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
