@@ -31,12 +31,13 @@ type Table struct {
 
 // Column represents a table column
 type Column struct {
-	Name    string
-	Type    string
-	NotNull bool
-	Default string // For DEFAULT clause value
-	Options string // For column options like ALLOW COMMIT TIMESTAMP
-	Order   int    // Original order in the DDL
+	OnUpdate string // ON UPDATE clause
+	Name     string
+	Type     string
+	NotNull  bool
+	Default  string // For DEFAULT clause value
+	Options  string // For column options like ALLOW COMMIT TIMESTAMP
+	Order    int    // Original order in the DDL
 }
 
 // Index represents a Spanner index
@@ -128,6 +129,9 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 		if col.DefaultSemantics != nil {
 			if defaultExpr, ok := col.DefaultSemantics.(*ast.ColumnDefaultExpr); ok {
 				column.Default = "(" + defaultExpr.Expr.SQL() + ")"
+				if defaultExpr.OnUpdate != nil {
+					column.OnUpdate = defaultExpr.OnUpdate.SQL()
+				}
 			}
 		}
 
@@ -481,6 +485,9 @@ func generateCreateTable(table *Table) string {
 		if col.Default != "" {
 			def += " DEFAULT " + col.Default
 		}
+		if col.OnUpdate != "" {
+			def += " " + col.OnUpdate
+		}
 		if col.Options != "" {
 			def += " " + col.Options
 		}
@@ -582,6 +589,9 @@ func generateAlterTable(current, desired *Table) []string {
 			}
 			if col.Default != "" {
 				def += " DEFAULT " + col.Default
+			}
+			if col.OnUpdate != "" {
+				def += " " + col.OnUpdate
 			}
 			if col.Options != "" {
 				def += " " + col.Options
