@@ -79,6 +79,8 @@ Application Options:
       --file=sql_file          Read desired SQL from the file, rather than stdin
       --dry-run                Don't run DDLs but just show them
       --export                 Just dump the current schema to stdout
+      --timeout=               Limit database operations (e.g. 30m; default 0 has no deadline)
+      --resume-operation=      Wait for a full DDL operation name without submitting a new plan
       --enable-drop            Enable destructive changes such as DROP TABLE, DROP INDEX
       --config=                YAML file to specify: target_tables, skip_tables
       --impersonate-service-account=email
@@ -87,6 +89,30 @@ Application Options:
       --help                   Show this help
       --version                Show this version
 ```
+
+### Input and configuration
+
+Multiple `--file` inputs (or comma-separated paths) are joined with a newline so a trailing SQL line comment cannot hide the next file. Keep complete, semicolon-separated DDL declarations in each file; do not split a token or string literal across files. Single-file input is unchanged.
+
+Configuration accepts one YAML document with `target_tables` and `skip_tables`. Unknown keys, duplicate keys, and extra documents are errors, so a misspelled filter cannot silently expose tables to removal.
+
+### Long-running schema updates
+
+Use `--timeout=30m` to limit database operations; the default `0` adds no overall deadline. Ctrl-C and SIGTERM cancel the client's RPCs and wait. **They do not cancel or roll back a DDL operation already accepted by Spanner.**
+
+Each submitted batch prints its full operation name to stderr before submission. SDK retries keep that operation ID. If the response is lost, use that name to inspect the operation or resume waiting:
+
+```sh
+spannerdef --project=my-project --instance=my-instance --database=my-db \
+  --resume-operation=projects/my-project/instances/my-instance/databases/my-db/operations/spannerdef_ID \
+  --timeout=30m
+```
+
+`--resume-operation` only waits; it does not submit SQL or continue later batches. If submission never reached Spanner, the operation may not exist. After the operation finishes, export and dry-run the desired schema again before applying any remaining changes.
+
+Execution preserves plan order, splits batches conservatively around Spanner's limit of ten statements requiring backfill or validation, and waits for each batch before sending the next. A new table and its immediately following ordinary indexes stay together when the table declaration has no table constraints. Errors stop subsequent batches; earlier changes remain applied. See [Spanner schema update guidance](https://docs.cloud.google.com/spanner/docs/schema-updates-best-practices).
+
+Exports preserve the order returned by Spanner, including dependencies, instead of sorting statements alphabetically.
 
 ### Authentication
 
@@ -261,6 +287,12 @@ Because spannerdef distinguishes tables/indexes by name, it does NOT support:
 - Database/table options and unmodeled schema objects such as queues, models, functions, proto bundles, locality groups, and roles/grants (these return explicit errors). See [supported schema objects and their limits](#additional-googlesql-schema-objects).
 
 To handle these cases, you would need to apply changes manually and use `--export` to capture the new schema.
+
+## Library usage
+
+Use `RunContext(ctx, db, options)` and `ParseGeneratorConfigChecked(path)` to handle errors without terminating your process. `NewDatabaseContext`, `NewAdminDatabaseContext`, `RunDDLsContext`, and the concrete database's context methods accept caller cancellation. `WithDDLOperationObserver` reports operation names; `DDLOperationError` preserves both the name and the underlying error for `errors.Is`/`errors.As` and gRPC status inspection. `WaitDDLOperation` resumes a wait without submitting SQL.
+
+The existing `Database` interface, public configuration struct layouts, and legacy function signatures remain compatible. Custom `Database` implementations still work; implement the optional `ContextDatabase` methods to support cancellation of in-flight calls. Legacy `Run` and `ParseGeneratorConfig` retain their exit-on-error behavior and are deprecated. DDL administration uses only the admin client, without creating data sessions.
 
 ## Architecture
 

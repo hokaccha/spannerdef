@@ -1,7 +1,11 @@
 package spannerdef
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -32,7 +36,22 @@ type Database interface {
 	Close() error
 }
 
+// ContextDatabase is an optional extension; Database itself is unchanged.
+type ContextDatabase interface {
+	Database
+	DumpDDLsContext(context.Context) (string, error)
+	ExecDDLsContext(context.Context, []string) error
+}
+
 func RunDDLs(d Database, ddls []string, enableDrop bool, quiet bool) error {
+	return RunDDLsContext(context.Background(), d, ddls, enableDrop, quiet)
+}
+
+// RunDDLsContext validates the complete drop-filtered plan before execution.
+func RunDDLsContext(ctx context.Context, d Database, ddls []string, enableDrop bool, quiet bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !quiet {
 		fmt.Println("-- Apply --")
 	}
@@ -59,42 +78,59 @@ func RunDDLs(d Database, ddls []string, enableDrop bool, quiet bool) error {
 		return nil
 	}
 
-	// Execute all DDLs in batch
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if contextual, ok := d.(interface {
+		ExecDDLsContext(context.Context, []string) error
+	}); ok {
+		return contextual.ExecDDLsContext(ctx, validDDLs)
+	}
 	return d.ExecDDLs(validDDLs)
 }
 
+// ParseGeneratorConfig retains the legacy exit-on-error behavior.
+// Deprecated: use ParseGeneratorConfigChecked to handle configuration errors.
 func ParseGeneratorConfig(configFile string) GeneratorConfig {
-	if configFile == "" {
-		return GeneratorConfig{}
-	}
-
-	buf, err := os.ReadFile(configFile)
+	config, err := ParseGeneratorConfigChecked(configFile)
 	if err != nil {
 		log.Fatal(err)
 	}
+	return config
+}
 
+// ParseGeneratorConfigChecked rejects unknown fields and extra YAML documents
+// before any schema can be planned. Empty files retain their previous meaning.
+func ParseGeneratorConfigChecked(configFile string) (GeneratorConfig, error) {
+	if configFile == "" {
+		return GeneratorConfig{}, nil
+	}
+	buf, err := os.ReadFile(configFile)
+	if err != nil {
+		return GeneratorConfig{}, fmt.Errorf("read config %s: %w", configFile, err)
+	}
 	var config struct {
 		TargetTables string `yaml:"target_tables"`
 		SkipTables   string `yaml:"skip_tables"`
 	}
-
-	err = yaml.Unmarshal(buf, &config)
-	if err != nil {
-		log.Fatal(err)
+	decoder := yaml.NewDecoder(bytes.NewReader(buf))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil && !errors.Is(err, io.EOF) {
+		return GeneratorConfig{}, fmt.Errorf("parse config %s: %w", configFile, err)
 	}
-
-	var targetTables []string
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = fmt.Errorf("only one YAML document is allowed")
+		}
+		return GeneratorConfig{}, fmt.Errorf("parse config %s: %w", configFile, err)
+	}
+	var targetTables, skipTables []string
 	if config.TargetTables != "" {
 		targetTables = strings.Split(strings.Trim(config.TargetTables, "\n"), "\n")
 	}
-
-	var skipTables []string
 	if config.SkipTables != "" {
 		skipTables = strings.Split(strings.Trim(config.SkipTables, "\n"), "\n")
 	}
-
-	return GeneratorConfig{
-		TargetTables: targetTables,
-		SkipTables:   skipTables,
-	}
+	return GeneratorConfig{TargetTables: targetTables, SkipTables: skipTables}, nil
 }

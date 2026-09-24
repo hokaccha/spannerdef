@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"github.com/hokaccha/spannerdef"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -280,4 +283,43 @@ func TestParseOptions_ImpersonateServiceAccountDefaultsToEmpty(t *testing.T) {
 	config, _ := parseOptions(args)
 
 	assert.Equal(t, "", config.ImpersonateServiceAccount)
+}
+
+// Retain concise assertions in the existing valid-input tests.
+func parseOptions(args []string) (spannerdef.Config, *spannerdef.Options) {
+	command, err := parseCommand(args)
+	if err != nil {
+		panic(err)
+	}
+	return command.config, &command.options
+}
+
+func TestCommandErrorsAndDeadline(t *testing.T) {
+	for _, args := range [][]string{
+		{"--unknown-flag"},
+		{"--project=p", "--instance=i", "--database=d", "--export", "--timeout=-1s"},
+	} {
+		require.Error(t, runCommand(context.Background(), args))
+	}
+	command, err := parseCommand([]string{"--project=p", "--instance=i", "--database=d", "--export", "--timeout=30m"})
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Minute, command.timeout)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, runCommand(ctx, []string{"--project=p", "--instance=i", "--database=d", "--export"}), context.Canceled)
+	for _, flag := range []string{"--help", "--version"} {
+		require.NoError(t, runCommand(context.Background(), []string{flag}))
+	}
+}
+
+func TestResumeParsing(t *testing.T) {
+	base := []string{"--project=p", "--instance=i", "--database=d", "--resume-operation=projects/p/instances/i/databases/d/operations/test"}
+	command, err := parseCommand(base)
+	require.NoError(t, err)
+	require.Empty(t, command.options.DesiredDDLs)
+	require.NotEmpty(t, command.resumeOperation)
+	for _, flag := range []string{"--export", "--dry-run", "--enable-drop", "--file=-", "--config=config.yml"} {
+		_, err := parseCommand(append(append([]string{}, base...), flag))
+		require.ErrorContains(t, err, "cannot be combined")
+	}
 }
