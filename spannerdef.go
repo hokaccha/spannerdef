@@ -56,18 +56,31 @@ func Run(db Database, options *Options) {
 
 // GenerateIdempotentDDLs generates DDLs to transform current schema to desired schema
 func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorConfig) ([]string, error) {
-	currentSchema, err := ParseDDLs(currentDDLs)
+	currentSchema, err := parseDDLs(currentDDLs, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse current DDLs: %v", err)
 	}
 
-	desiredSchema, err := ParseDDLs(desiredDDLs)
+	desiredSchema, err := parseDDLs(desiredDDLs, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse desired DDLs: %v", err)
 	}
 
+	// Dropping a namespace can affect objects this tool does not model.
+	if len(config.TargetTables) == 0 && len(config.SkipTables) == 0 {
+		for name := range currentSchema.NamedSchemas {
+			if !desiredSchema.NamedSchemas[name] {
+				return nil, fmt.Errorf("dropping named schema %s is not supported; retain its CREATE SCHEMA declaration", name)
+			}
+		}
+	}
+
 	// Apply filters based on config
+	existingNamespaces := currentSchema.NamedSchemas
 	currentSchema = filterSchema(currentSchema, config)
+	// Keep namespace existence even when all of its current tables are filtered
+	// out, so adding a selected table does not recreate an existing schema.
+	currentSchema.NamedSchemas = existingNamespaces
 	desiredSchema = filterSchema(desiredSchema, config)
 
 	if err := validateGenerationChanges(currentSchema, desiredSchema); err != nil {
@@ -80,14 +93,18 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 // filterSchema applies target/skip table filters
 func filterSchema(s *Schema, config GeneratorConfig) *Schema {
 	filtered := &Schema{
-		Tables:  make(map[string]*Table),
-		Indexes: make(map[string]*Index),
+		NamedSchemas: make(map[string]bool),
+		Tables:       make(map[string]*Table),
+		Indexes:      make(map[string]*Index),
 	}
 
 	// Filter tables
 	for name, table := range s.Tables {
 		if shouldIncludeTable(name, config) {
 			filtered.Tables[name] = table
+			if s.NamedSchemas[table.SchemaName] {
+				filtered.NamedSchemas[table.SchemaName] = true
+			}
 		}
 	}
 
@@ -95,17 +112,25 @@ func filterSchema(s *Schema, config GeneratorConfig) *Schema {
 	for name, index := range s.Indexes {
 		if shouldIncludeTable(index.TableName, config) {
 			filtered.Indexes[name] = index
+			if s.NamedSchemas[index.SchemaName] {
+				filtered.NamedSchemas[index.SchemaName] = true
+			}
 		}
 	}
 
+	if len(config.TargetTables) == 0 && len(config.SkipTables) == 0 {
+		filtered.NamedSchemas = s.NamedSchemas
+	}
 	return filtered
 }
 
 // shouldIncludeTable checks if a table should be included based on config
 func shouldIncludeTable(tableName string, config GeneratorConfig) bool {
+	tableName = tableFilterName(tableName)
+
 	// Check skip tables
 	for _, skip := range config.SkipTables {
-		if tableName == skip {
+		if tableName == tableFilterName(skip) {
 			return false
 		}
 	}
@@ -113,7 +138,7 @@ func shouldIncludeTable(tableName string, config GeneratorConfig) bool {
 	// Check target tables (if specified, only include those)
 	if len(config.TargetTables) > 0 {
 		for _, target := range config.TargetTables {
-			if tableName == target {
+			if tableName == tableFilterName(target) {
 				return true
 			}
 		}

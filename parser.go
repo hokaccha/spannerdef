@@ -13,12 +13,14 @@ import (
 
 // Schema represents a database schema
 type Schema struct {
-	Tables  map[string]*Table
-	Indexes map[string]*Index
+	NamedSchemas map[string]bool
+	Tables       map[string]*Table
+	Indexes      map[string]*Index
 }
 
 // Table represents a Spanner table
 type Table struct {
+	SchemaName              string
 	Name                    string
 	Columns                 map[string]*Column
 	PrimaryKey              []string
@@ -44,6 +46,7 @@ type Column struct {
 
 // Index represents a Spanner index
 type Index struct {
+	SchemaName   string
 	Name         string
 	TableName    string
 	Columns      []string
@@ -65,9 +68,14 @@ type Constraint struct {
 
 // ParseDDLs parses DDL statements and returns a Schema
 func ParseDDLs(ddls string) (*Schema, error) {
+	return parseDDLs(ddls, GeneratorConfig{})
+}
+
+func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	schema := &Schema{
-		Tables:  make(map[string]*Table),
-		Indexes: make(map[string]*Index),
+		NamedSchemas: make(map[string]bool),
+		Tables:       make(map[string]*Table),
+		Indexes:      make(map[string]*Index),
 	}
 
 	if strings.TrimSpace(ddls) == "" {
@@ -80,6 +88,23 @@ func ParseDDLs(ddls string) (*Schema, error) {
 		return nil, fmt.Errorf("failed to parse DDLs: %v", err)
 	}
 
+	// Excluded tables and their indexes/ALTERs are outside the managed schema.
+	// Keep validating statements whose scope cannot be tied to a table.
+	included := make([]ast.DDL, 0, len(parsed))
+	for _, stmt := range parsed {
+		if tableName := ddlTableName(stmt); tableName != "" && !shouldIncludeTable(tableName, config) {
+			continue
+		}
+		included = append(included, stmt)
+	}
+	parsed = included
+
+	for _, stmt := range parsed {
+		if err := validateSupportedDDL(stmt); err != nil {
+			return nil, err
+		}
+	}
+
 	// Two passes: create tables/indexes first, then apply alterations.
 	// Spanner's GetDatabaseDdl emits foreign keys as separate ALTER TABLE
 	// statements, and the statements may not be ordered so that tables
@@ -87,6 +112,11 @@ func ParseDDLs(ddls string) (*Schema, error) {
 	// alphabetically, which puts ALTER before CREATE).
 	for _, stmt := range parsed {
 		switch s := stmt.(type) {
+		case *ast.CreateSchema:
+			if s.OrReplace {
+				return nil, fmt.Errorf("CREATE OR REPLACE SCHEMA is not supported")
+			}
+			schema.NamedSchemas[s.Name.SQL()] = true
 		case *ast.CreateTable:
 			if err := processCreateTable(schema, s); err != nil {
 				return nil, fmt.Errorf("failed to process statement: %v", err)
@@ -95,6 +125,10 @@ func ParseDDLs(ddls string) (*Schema, error) {
 			if err := processCreateIndex(schema, s); err != nil {
 				return nil, fmt.Errorf("failed to process statement: %v", err)
 			}
+		case *ast.AlterTable:
+			// Applied in the second pass after all CREATE TABLE statements.
+		default:
+			return nil, fmt.Errorf("unsupported DDL statement %T: %s", stmt, stmt.SQL())
 		}
 	}
 	for _, stmt := range parsed {
@@ -114,6 +148,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 
 	table := &Table{
 		Name:        tableName,
+		SchemaName:  pathSchemaName(stmt.Name),
 		Columns:     make(map[string]*Column),
 		Constraints: make(map[string]*Constraint),
 	}
@@ -123,7 +158,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	columnNames := make(map[string]*Column)
 	for i, col := range stmt.Columns {
 		column := &Column{
-			Name:    col.Name.Name,
+			Name:    col.Name.SQL(),
 			Type:    formatColumnType(col.Type),
 			NotNull: col.NotNull,
 			Order:   i,
@@ -159,7 +194,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 
 	// Process primary key
 	for _, key := range stmt.PrimaryKeys {
-		table.PrimaryKey = append(table.PrimaryKey, key.Name.Name)
+		table.PrimaryKey = append(table.PrimaryKey, key.Name.SQL())
 	}
 
 	// Process table constraints
@@ -171,7 +206,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	if stmt.Cluster != nil {
 		cluster := stmt.Cluster
 		if cluster.TableName != nil && len(cluster.TableName.Idents) > 0 {
-			table.ParentTable = cluster.TableName.Idents[len(cluster.TableName.Idents)-1].Name
+			table.ParentTable = getPathName(cluster.TableName)
 		}
 		table.OnDelete = string(cluster.OnDelete)
 	}
@@ -179,7 +214,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	// Process row deletion policy
 	if stmt.RowDeletionPolicy != nil && stmt.RowDeletionPolicy.RowDeletionPolicy != nil {
 		policy := stmt.RowDeletionPolicy.RowDeletionPolicy
-		table.RowDeletionPolicyColumn = policy.ColumnName.Name
+		table.RowDeletionPolicyColumn = policy.ColumnName.SQL()
 		// Convert string value to int64
 		days, err := strconv.ParseInt(policy.NumDays.Value, policy.NumDays.Base, 64)
 		if err != nil {
@@ -192,15 +227,13 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	return nil
 }
 
-// processAlterTable processes ALTER TABLE statement. Only the actions that
-// affect the schema model (currently ADD CONSTRAINT) are handled — others
-// are ignored so round-tripping DDL from Spanner/Omni's GetDatabaseDdl does
-// not error out.
+// processAlterTable loads the ADD CONSTRAINT form emitted by GetDatabaseDdl.
+// Other ALTER actions are rejected by validateSupportedDDL.
 func processAlterTable(schema *Schema, stmt *ast.AlterTable) error {
 	tableName := getPathName(stmt.Name)
 	table, ok := schema.Tables[tableName]
 	if !ok {
-		return nil
+		return fmt.Errorf("ALTER TABLE references unknown table %s", tableName)
 	}
 
 	if add, ok := stmt.TableAlteration.(*ast.AddTableConstraint); ok && add.TableConstraint != nil {
@@ -217,13 +250,13 @@ func processAlterTable(schema *Schema, stmt *ast.AlterTable) error {
 func registerTableConstraint(table *Table, tc *ast.TableConstraint) {
 	constraintName := ""
 	if tc.Name != nil {
-		constraintName = tc.Name.Name
+		constraintName = tc.Name.SQL()
 	}
 
 	switch c := tc.Constraint.(type) {
 	case *ast.Check:
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("CK_%s_%d", table.Name, len(table.Constraints))
+			constraintName = generatedConstraintName("CK", table, len(table.Constraints))
 		}
 		table.Constraints[constraintName] = &Constraint{
 			Name:       constraintName,
@@ -232,17 +265,17 @@ func registerTableConstraint(table *Table, tc *ast.TableConstraint) {
 		}
 	case *ast.ForeignKey:
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("FK_%s_%d", table.Name, len(table.Constraints))
+			constraintName = generatedConstraintName("FK", table, len(table.Constraints))
 		}
 
 		var columns []string
 		for _, col := range c.Columns {
-			columns = append(columns, col.Name)
+			columns = append(columns, col.SQL())
 		}
 
 		var refColumns []string
 		for _, col := range c.ReferenceColumns {
-			refColumns = append(refColumns, col.Name)
+			refColumns = append(refColumns, col.SQL())
 		}
 
 		table.Constraints[constraintName] = &Constraint{
@@ -263,6 +296,7 @@ func processCreateIndex(schema *Schema, stmt *ast.CreateIndex) error {
 
 	index := &Index{
 		Name:         indexName,
+		SchemaName:   pathSchemaName(stmt.Name),
 		TableName:    tableName,
 		Unique:       stmt.Unique,
 		NullFiltered: stmt.NullFiltered,
@@ -270,13 +304,13 @@ func processCreateIndex(schema *Schema, stmt *ast.CreateIndex) error {
 
 	// Process key columns
 	for _, key := range stmt.Keys {
-		index.Columns = append(index.Columns, key.Name.Name)
+		index.Columns = append(index.Columns, key.Name.SQL())
 	}
 
 	// Process storing columns
 	if stmt.Storing != nil {
 		for _, storing := range stmt.Storing.Columns {
-			index.Storing = append(index.Storing, storing.Name)
+			index.Storing = append(index.Storing, storing.SQL())
 		}
 	}
 
@@ -289,8 +323,7 @@ func getPathName(path *ast.Path) string {
 	if path == nil || len(path.Idents) == 0 {
 		return ""
 	}
-	// For simple cases, just return the last identifier
-	return path.Idents[len(path.Idents)-1].Name
+	return path.SQL()
 }
 
 // formatColumnType formats a column type from AST to string
@@ -313,6 +346,18 @@ func GenerateDDLs(current, desired *Schema) []string {
 	// 2. Drop tables
 	dropTableDDLs := generateDropTableDDLs(current, desired)
 	ddls = append(ddls, dropTableDDLs...)
+
+	// Release conflicting object names before creating namespaces.
+	var schemaNames []string
+	for name := range desired.NamedSchemas {
+		if !current.NamedSchemas[name] {
+			schemaNames = append(schemaNames, name)
+		}
+	}
+	sort.Strings(schemaNames)
+	for _, name := range schemaNames {
+		ddls = append(ddls, "CREATE SCHEMA "+name)
+	}
 
 	// 3. Alter existing tables
 	alterTableDDLs := generateAlterTableDDLs(current, desired)
