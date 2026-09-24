@@ -1,6 +1,10 @@
 package spannerdef
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/cloudspannerecosystem/memefish/ast"
+	"strings"
+)
 
 func validateOnUpdateChanges(current, desired *Schema) error {
 	for name, next := range desired.Tables {
@@ -22,4 +26,15 @@ func validateOnUpdateChanges(current, desired *Schema) error {
 		}
 	}
 	return nil
+}
+
+// Function names are case insensitive; string literals and column names are not
+// normalized here. Restrict this to the commit-timestamp built-in used by ON UPDATE.
+func normalizeCommitTimestamp(expr ast.Expr) {
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && len(call.Func.Idents) == 1 && strings.EqualFold(call.Func.Idents[0].Name, "PENDING_COMMIT_TIMESTAMP") {
+			call.Func.Idents[0].Name = "PENDING_COMMIT_TIMESTAMP"
+		}
+		return true
+	})
 }

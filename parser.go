@@ -128,8 +128,10 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 		// Extract DEFAULT clause if present
 		if col.DefaultSemantics != nil {
 			if defaultExpr, ok := col.DefaultSemantics.(*ast.ColumnDefaultExpr); ok {
+				normalizeCommitTimestamp(defaultExpr.Expr)
 				column.Default = "(" + defaultExpr.Expr.SQL() + ")"
 				if defaultExpr.OnUpdate != nil {
+					normalizeCommitTimestamp(defaultExpr.OnUpdate.Expr)
 					column.OnUpdate = defaultExpr.OnUpdate.SQL()
 				}
 			}
