@@ -29,6 +29,9 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 		return nil, err
 	}
 	base := generateOrderedDDLs(current, desired)
+	oldObjects, newObjects := objectsByKey(current.Objects), objectsByKey(desired.Objects)
+	columnChanges := map[string]map[string]bool{}
+	droppedTables := map[string]bool{}
 	// Structural changes require dependent views/graphs/indexes to be released
 	// first. Rebuild the transitive closure, even if their text is unchanged.
 	affected := map[string]bool{}
@@ -40,36 +43,44 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 		switch n := node.(type) {
 		case *ast.DropTable:
 			affected[objectKey(n.Name.SQL())] = true
+			droppedTables[objectKey(n.Name.SQL())] = true
 		case *ast.AlterTable:
-			switch n.TableAlteration.(type) {
-			case *ast.DropColumn, *ast.AlterColumn:
-				affected[objectKey(n.Name.SQL())] = true
+			key := objectKey(n.Name.SQL())
+			if columnChanges[key] == nil {
+				columnChanges[key] = map[string]bool{}
+			}
+			switch a := n.TableAlteration.(type) {
+			case *ast.DropColumn:
+				columnChanges[key][objectKey(a.Name.SQL())] = true
+				affected[key] = true
+			case *ast.AlterColumn:
+				affected[key] = true
 			}
 		}
 	}
 	rebuild := map[string]bool{}
 	for _, o := range oldOrder {
-		next := desired.Objects[o.Name]
+		next := newObjects[objectKey(o.Name)]
 		if next == nil {
 			affected[objectKey(o.Name)] = true
 			continue
 		}
 		for ref := range objectReferences(o.definition) {
 			if affected[ref] && o.Kind != "CHANGE STREAM" {
-				rebuild[o.Name] = true
+				rebuild[objectKey(o.Name)] = true
 			}
 		}
 		if o.Kind == "SEARCH INDEX" || o.Kind == "VECTOR INDEX" {
-			rebuild[o.Name] = rebuild[o.Name] || !sameObject(o, next)
+			rebuild[objectKey(o.Name)] = rebuild[objectKey(o.Name)] || !sameObject(o, next)
 		}
-		if rebuild[o.Name] || !sameObject(o, next) {
+		if rebuild[objectKey(o.Name)] || ((o.Kind == "VIEW" || o.Kind == "PROPERTY GRAPH") && !sameObject(o, next)) {
 			affected[objectKey(o.Name)] = true
 		}
 	}
 	var before, after, sequences, sequenceDrops []string
 	for i := len(oldOrder) - 1; i >= 0; i-- {
 		o := oldOrder[i]
-		if desired.Objects[o.Name] == nil || rebuild[o.Name] {
+		if newObjects[objectKey(o.Name)] == nil || rebuild[objectKey(o.Name)] {
 			sql := "DROP " + o.Kind + " " + o.Name
 			if o.Kind == "SEQUENCE" {
 				sequenceDrops = append(sequenceDrops, sql)
@@ -79,8 +90,8 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 		}
 	}
 	for _, o := range newOrder {
-		old := current.Objects[o.Name]
-		if old == nil || rebuild[o.Name] {
+		old := oldObjects[objectKey(o.Name)]
+		if old == nil || rebuild[objectKey(o.Name)] {
 			if o.Kind == "SEQUENCE" {
 				sequences = append(sequences, o.definition.SQL())
 			} else {
@@ -105,14 +116,14 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 				if streamNeedsNewColumns(n, current) {
 					// An intermediate suspension would introduce an unrequested capture gap.
 					// Require two explicit migrations if old tracked columns must first go.
-					if streamBlockedByChanges(prev, affected) {
+					if streamBlockedByChanges(prev, droppedTables, columnChanges) {
 						return nil, fmt.Errorf("change stream %s needs new columns and releases altered tables in the same migration; change its FOR clause in a separate migration", o.Name)
 					}
 					after = append(after, sql)
 				} else {
 					before = append(before, sql)
 				}
-			} else if streamBlockedByChanges(prev, affected) {
+			} else if streamBlockedByChanges(prev, droppedTables, columnChanges) {
 				return nil, fmt.Errorf("change stream %s explicitly tracks a structurally changed table; update its FOR clause before altering that table", o.Name)
 			}
 			if delta := changedOptions(prev.Options, n.Options, false); delta != nil {
@@ -180,27 +191,34 @@ func streamNeedsNewColumns(stream *ast.CreateChangeStream, current *Schema) bool
 		return false
 	}
 	for _, target := range tables.Tables {
-		table := current.Tables[target.TableName.SQL()]
+		table := tableByKey(current, target.TableName.SQL())
 		if table == nil {
 			return true
 		}
 		for _, col := range target.Columns {
-			if table.Columns[col.SQL()] == nil {
+			if columnByKey(table, col.SQL()) == nil {
 				return true
 			}
 		}
 	}
 	return false
 }
-func streamBlockedByChanges(stream *ast.CreateChangeStream, affected map[string]bool) bool {
-	// FOR ALL automatically follows schema additions/removals. Explicit lists
-	// can block DDL and must be released by an explicit FOR change first.
-	if _, ok := stream.For.(*ast.ChangeStreamForAll); ok {
+func streamBlockedByChanges(stream *ast.CreateChangeStream, droppedTables map[string]bool, columns map[string]map[string]bool) bool {
+	tables, ok := stream.For.(*ast.ChangeStreamForTables)
+	if !ok {
 		return false
-	}
-	for ref := range objectReferences(stream) {
-		if affected[ref] {
+	} // FOR ALL automatically follows schema changes.
+	for _, target := range tables.Tables {
+		key := objectKey(target.TableName.SQL())
+		if droppedTables[key] {
 			return true
+		}
+		// FOR T tracks all current and future columns. FOR T() tracks only
+		// the key. Only explicitly named non-key columns block changes.
+		for _, column := range target.Columns {
+			if columns[key][objectKey(column.SQL())] {
+				return true
+			}
 		}
 	}
 	return false
@@ -263,6 +281,19 @@ func validateObjectNames(current, desired *Schema) error {
 		return nil
 	}
 	for _, o := range desired.Objects {
+		if stream, ok := o.definition.(*ast.CreateChangeStream); ok {
+			if targets, ok := stream.For.(*ast.ChangeStreamForTables); ok {
+				for _, target := range targets.Tables {
+					if table := tableByKey(desired, target.TableName.SQL()); table != nil {
+						for _, column := range target.Columns {
+							if columnByKey(table, column.SQL()) == nil {
+								return fmt.Errorf("change stream %s references missing column %s.%s", o.Name, target.TableName.SQL(), column.SQL())
+							}
+						}
+					}
+				}
+			}
+		}
 		if err := check(o.Name, o.definition); err != nil {
 			return err
 		}
@@ -294,5 +325,5 @@ func streamForSQL(forClause ast.ChangeStreamFor) string {
 	if forClause == nil {
 		return ""
 	}
-	return forClause.SQL()
+	return strings.ToLower(forClause.SQL())
 }

@@ -115,3 +115,72 @@ func TestSchemaObjectCTEScope(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(plan[0], "CREATE VIEW Z"), plan)
 }
+
+func TestSequenceHexSeedDoesNotResetCounter(t *testing.T) {
+	plan, err := GenerateIdempotentDDLs(`CREATE SEQUENCE S OPTIONS(sequence_kind='bit_reversed_positive',start_with_counter=0xA)`, `CREATE SEQUENCE S OPTIONS(sequence_kind='bit_reversed_positive',start_with_counter=10)`, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Empty(t, plan)
+}
+func TestStreamEmptyColumnListIsNotAllColumns(t *testing.T) {
+	plan, err := GenerateIdempotentDDLs(objectTable+`CREATE CHANGE STREAM C FOR T()`, objectTable+`CREATE CHANGE STREAM C FOR T`, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Equal(t, []string{`ALTER CHANGE STREAM C SET FOR T()`}, plan)
+}
+func TestObjectDuplicateOptions(t *testing.T) {
+	_, err := ParseDDLs(`CREATE SEQUENCE S OPTIONS(sequence_kind='bit_reversed_positive', start_with_counter=10, START_WITH_COUNTER=20)`)
+	require.ErrorContains(t, err, "duplicate option")
+}
+
+func TestObjectCaseOnlyNamesPreserveState(t *testing.T) {
+	for _, ddl := range objectDefinitions {
+		original, err := memefish.ParseDDL("", ddl)
+		require.NoError(t, err)
+		o := schemaObject(original)
+		changed := strings.Replace(ddl, " "+o.Name+" ", " "+strings.ToLower(o.Name)+" ", 1)
+		plan, err := GenerateIdempotentDDLs(objectTable+changed, objectTable+ddl, GeneratorConfig{})
+		require.NoError(t, err)
+		require.Empty(t, plan, ddl)
+	}
+}
+func TestGraphSourceCaseInsensitive(t *testing.T) {
+	plan, err := GenerateIdempotentDDLs(objectTable+`CREATE PROPERTY GRAPH G NODE TABLES(t)`, objectTable+`CREATE PROPERTY GRAPH G NODE TABLES(T)`, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Empty(t, plan)
+}
+func TestStreamAllowsSafeColumnChanges(t *testing.T) {
+	for _, tracking := range []string{"T(Name)", "T", "T()"} {
+		initial := objectTable + `CREATE CHANGE STREAM C FOR ` + tracking
+		for _, desired := range []string{strings.Replace(initial, "Extra STRING(MAX), ", "", 1), strings.Replace(initial, "Extra STRING(MAX)", "Extra BYTES(MAX)", 1)} {
+			plan, err := GenerateIdempotentDDLs(desired, initial, GeneratorConfig{})
+			require.NoError(t, err)
+			require.Len(t, plan, 1)
+		}
+	}
+	// Type changes to an explicitly tracked, non-generated column are allowed.
+	initial := objectTable + `CREATE CHANGE STREAM C FOR T(Extra)`
+	plan, err := GenerateIdempotentDDLs(strings.Replace(initial, "Extra STRING(MAX)", "Extra BYTES(MAX)", 1), initial, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Len(t, plan, 1)
+	_, err = GenerateIdempotentDDLs(strings.Replace(initial, "Extra STRING(MAX), ", "", 1), initial, GeneratorConfig{})
+	require.ErrorContains(t, err, "missing column")
+}
+func TestSequenceSeedOmissionDoesNotRebuildView(t *testing.T) {
+	initial := `CREATE SEQUENCE S OPTIONS(sequence_kind='bit_reversed_positive',start_with_counter=10); CREATE VIEW V SQL SECURITY INVOKER AS SELECT GET_INTERNAL_SEQUENCE_STATE(SEQUENCE S) AS State`
+	plan, err := GenerateIdempotentDDLs(strings.Replace(initial, ",start_with_counter=10", "", 1), initial, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Empty(t, plan)
+}
+
+func TestGraphQueryViewDependency(t *testing.T) {
+	desired := objectTable + `CREATE VIEW A SQL SECURITY INVOKER AS SELECT q.id FROM GRAPH_TABLE(Z MATCH (n) COLUMNS(n.Id AS id)) AS q; CREATE PROPERTY GRAPH Z NODE TABLES(T)`
+	plan, err := GenerateIdempotentDDLs(desired, "", GeneratorConfig{})
+	require.NoError(t, err)
+	require.Len(t, plan, 3)
+	require.True(t, strings.HasPrefix(plan[1], "CREATE PROPERTY GRAPH Z"), plan)
+	require.True(t, strings.HasPrefix(plan[2], "CREATE VIEW A"), plan)
+}
+func TestStreamReferenceCaseNoOp(t *testing.T) {
+	plan, err := GenerateIdempotentDDLs(objectTable+`CREATE CHANGE STREAM c FOR t(name)`, objectTable+`CREATE CHANGE STREAM C FOR T(Name)`, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Empty(t, plan)
+}

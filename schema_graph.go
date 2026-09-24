@@ -62,9 +62,19 @@ func normalizeGraph(object *SchemaObject, schema *Schema) error {
 	return nil
 }
 func normalizeGraphElement(element *ast.PropertyGraphElement, schema *Schema, node bool) error {
-	table := schema.Tables[element.Name.SQL()]
-	if element.Alias != nil && element.Alias.Name == element.Name.Name {
+	table := tableByKey(schema, element.Name.SQL())
+	if element.Alias != nil && strings.EqualFold(element.Alias.Name, element.Name.Name) {
 		element.Alias = nil
+	}
+	if table != nil && !table.PrimaryKeyExplicit && len(table.PrimaryKey) == 0 && columnByKey(table, "rowid") == nil {
+		expanded := *table
+		expanded.PrimaryKey = []string{"rowid"}
+		expanded.Columns = make(map[string]*Column, len(table.Columns)+1)
+		for name, column := range table.Columns {
+			expanded.Columns[name] = column
+		}
+		expanded.Columns["rowid"] = &Column{Name: "rowid", Type: "INT64", Hidden: true, NotNull: true}
+		table = &expanded
 	}
 	if table != nil {
 		cols := &ast.PropertyGraphColumnNameList{}
@@ -130,7 +140,7 @@ func normalizeGraphElement(element *ast.PropertyGraphElement, schema *Schema, no
 		}
 		if props, ok := label.Properties.(*ast.PropertyGraphDerivedPropertyList); ok {
 			for _, prop := range props.DerivedProperties {
-				if col, ok := prop.Expr.(*ast.Ident); ok && prop.Alias != nil && col.Name == prop.Alias.Name {
+				if col, ok := prop.Expr.(*ast.Ident); ok && prop.Alias != nil && strings.EqualFold(col.Name, prop.Alias.Name) {
 					prop.Alias = nil
 				}
 			}

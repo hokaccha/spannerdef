@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/cloudspannerecosystem/memefish"
 	"github.com/cloudspannerecosystem/memefish/ast"
 )
 
@@ -86,6 +88,19 @@ func normalizeObject(o *SchemaObject) error {
 		case *ast.Options:
 			for _, r := range n.Records {
 				r.Name.Name = strings.ToLower(r.Name.Name)
+				ast.Inspect(r.Value, func(value ast.Node) bool {
+					if number, ok := value.(*ast.IntLiteral); ok {
+						digits := number.Value
+						if number.Base == 16 {
+							digits = strings.TrimPrefix(strings.TrimPrefix(digits, "0x"), "0X")
+						}
+						if parsed, err := strconv.ParseInt(digits, number.Base, 64); err == nil {
+							number.Base = 10
+							number.Value = strconv.FormatInt(parsed, 10)
+						}
+					}
+					return true
+				})
 			}
 			sort.Slice(n.Records, func(i, j int) bool { return n.Records[i].Name.Name < n.Records[j].Name.Name })
 		case *ast.Storing:
@@ -126,7 +141,23 @@ func makeOptions(values map[string]ast.Expr) *ast.Options {
 	return result
 }
 func sameObject(a, b *SchemaObject) bool {
-	return a.Kind == b.Kind && equalGenerationAST(reflect.ValueOf(a.definition), reflect.ValueOf(b.definition))
+	if a.Kind != b.Kind {
+		return false
+	}
+	canonical := func(ddl ast.DDL) ast.DDL {
+		node, err := memefish.ParseDDL("", ddl.SQL())
+		if err != nil {
+			return ddl
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				id.Name = strings.ToLower(id.Name)
+			}
+			return true
+		})
+		return node
+	}
+	return equalGenerationAST(reflect.ValueOf(canonical(a.definition)), reflect.ValueOf(canonical(b.definition)))
 }
 
 // objectReferences walks actual table/sequence reference nodes, not identifier
@@ -171,6 +202,10 @@ func objectReferences(node ast.Node) map[string]bool {
 				refs[objectKey(n.Path.SQL())] = true
 			case *ast.SequenceArg:
 				refs[objectKey(n.Expr.SQL())] = true
+			case *ast.GraphTableExpr:
+				refs[objectKey(n.GraphName.SQL())] = true
+			case *ast.GQLGraphClause:
+				refs[objectKey(n.PropertyGraphName.SQL())] = true
 			case *ast.PropertyGraphElement:
 				refs[objectKey(n.Name.SQL())] = true
 			case *ast.CreateSearchIndex:
@@ -234,4 +269,31 @@ func orderedObjects(objects map[string]*SchemaObject) ([]*SchemaObject, error) {
 		}
 	}
 	return result, nil
+}
+
+func objectsByKey(objects map[string]*SchemaObject) map[string]*SchemaObject {
+	result := map[string]*SchemaObject{}
+	for name, object := range objects {
+		result[objectKey(name)] = object
+	}
+	return result
+}
+func tableByKey(schema *Schema, name string) *Table {
+	for key, table := range schema.Tables {
+		if objectKey(key) == objectKey(name) {
+			return table
+		}
+	}
+	return nil
+}
+func columnByKey(table *Table, name string) *Column {
+	if table == nil {
+		return nil
+	}
+	for key, column := range table.Columns {
+		if objectKey(key) == objectKey(name) {
+			return column
+		}
+	}
+	return nil
 }
