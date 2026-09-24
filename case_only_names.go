@@ -15,14 +15,7 @@ func validateCaseOnlyNameChanges(current, desired *Schema) error {
 	if err := checkCaseOnly("schema", "", current.NamedSchemas, desired.NamedSchemas); err != nil {
 		return err
 	}
-	managed := make(map[string]bool, len(current.Tables)+len(desired.Tables))
-	for name := range current.Tables {
-		managed[strings.ToLower(name)] = true
-	}
-	for name := range desired.Tables {
-		managed[strings.ToLower(name)] = true
-	}
-	if err := checkCaseOnly("table", "", tableNamesForCaseCheck(current, managed), tableNamesForCaseCheck(desired, managed)); err != nil {
+	if err := checkCaseOnly("table", "", current.Tables, desired.Tables); err != nil {
 		return err
 	}
 	if err := checkCaseOnly("index", "", current.Indexes, desired.Indexes); err != nil {
@@ -44,9 +37,21 @@ func validateCaseOnlyNameChanges(current, desired *Schema) error {
 	return nil
 }
 
+// Validate identities before discarding the parser's excluded table names.
+func validateFilteredTableNameChanges(current, desired *parsedSchema) error {
+	managed := make(map[string]bool, len(current.Tables)+len(desired.Tables))
+	for name := range current.Tables {
+		managed[strings.ToLower(name)] = true
+	}
+	for name := range desired.Tables {
+		managed[strings.ToLower(name)] = true
+	}
+	return checkCaseOnly("table", "", tableNamesForCaseCheck(current, managed), tableNamesForCaseCheck(desired, managed))
+}
+
 // Include an excluded spelling only when its case-insensitive identity is
 // managed on at least one side. This preserves filtering of unrelated tables.
-func tableNamesForCaseCheck(schema *Schema, managed map[string]bool) map[string]bool {
+func tableNamesForCaseCheck(schema *parsedSchema, managed map[string]bool) map[string]bool {
 	names := make(map[string]bool, len(schema.Tables))
 	for name := range schema.Tables {
 		names[name] = true

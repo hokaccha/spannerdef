@@ -58,15 +58,20 @@ func Run(db Database, options *Options) {
 
 // GenerateIdempotentDDLs generates DDLs to transform current schema to desired schema
 func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorConfig) ([]string, error) {
-	currentSchema, err := parseDDLs(currentDDLs, config)
+	currentParsed, err := parseDDLs(currentDDLs, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse current DDLs: %v", err)
 	}
 
-	desiredSchema, err := parseDDLs(desiredDDLs, config)
+	desiredParsed, err := parseDDLs(desiredDDLs, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse desired DDLs: %v", err)
 	}
+
+	if err := validateFilteredTableNameChanges(currentParsed, desiredParsed); err != nil {
+		return nil, err
+	}
+	currentSchema, desiredSchema := currentParsed.Schema, desiredParsed.Schema
 
 	// Dropping a namespace can affect objects this tool does not model.
 	if len(config.TargetTables) == 0 && len(config.SkipTables) == 0 {
@@ -113,11 +118,10 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 // filterSchema applies target/skip table filters
 func filterSchema(s *Schema, config GeneratorConfig) *Schema {
 	filtered := &Schema{
-		excludedTableNames: s.excludedTableNames,
-		Objects:            make(map[string]*SchemaObject),
-		NamedSchemas:       make(map[string]bool),
-		Tables:             make(map[string]*Table),
-		Indexes:            make(map[string]*Index),
+		Objects:      make(map[string]*SchemaObject),
+		NamedSchemas: make(map[string]bool),
+		Tables:       make(map[string]*Table),
+		Indexes:      make(map[string]*Index),
 	}
 
 	// Non-table objects are managed globally; table filters apply to indexes
