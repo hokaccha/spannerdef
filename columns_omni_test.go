@@ -2,6 +2,7 @@ package spannerdef
 
 import (
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 )
 
@@ -28,5 +29,16 @@ func TestOmniGeneratedColumnForwardDependencies(t *testing.T) {
 	desired := "CREATE TABLE T (Id INT64 NOT NULL, G INT64 AS (H + 1) STORED, H INT64 AS (N + 1) STORED, N INT64) PRIMARY KEY(Id)"
 	require.NotEmpty(t, applySchema(t, db, current, false))
 	require.Equal(t, []string{"ALTER TABLE T ADD COLUMN N INT64", "ALTER TABLE T ADD COLUMN H INT64 AS (N + 1) STORED", "ALTER TABLE T ADD COLUMN G INT64 AS (H + 1) STORED"}, applySchema(t, db, desired, false))
+	require.Empty(t, applySchema(t, db, desired, false))
+}
+
+func TestOmniGeneratedExpressionIdentifiers(t *testing.T) {
+	t.Parallel()
+	db := recreateDatabase(t, getTestConfig(t))
+	current := "CREATE TABLE T (Id INT64 NOT NULL, D DATE, Year INT64 AS (EXTRACT(YEAR FROM D)) STORED, Day INT64 AS (DATE_DIFF(D, DATE '2020-01-01', DAY)) STORED, N INT64 AS (ABS(Id)) STORED) PRIMARY KEY(Id)"
+	require.NotEmpty(t, applySchema(t, db, current, false))
+	desired := strings.Replace(current, "ABS(Id)", "abs((id))", 1)
+	desired = strings.Replace(desired, "Id INT64 NOT NULL,", "Id INT64 NOT NULL, Extra INT64,", 1)
+	require.Equal(t, []string{"ALTER TABLE T ADD COLUMN Extra INT64"}, applySchema(t, db, desired, false))
 	require.Empty(t, applySchema(t, db, desired, false))
 }
