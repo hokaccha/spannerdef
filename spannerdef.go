@@ -56,12 +56,12 @@ func Run(db Database, options *Options) {
 
 // GenerateIdempotentDDLs generates DDLs to transform current schema to desired schema
 func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorConfig) ([]string, error) {
-	currentSchema, err := ParseDDLs(currentDDLs)
+	currentSchema, err := parseDDLs(currentDDLs, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse current DDLs: %v", err)
 	}
 
-	desiredSchema, err := ParseDDLs(desiredDDLs)
+	desiredSchema, err := parseDDLs(desiredDDLs, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse desired DDLs: %v", err)
 	}
