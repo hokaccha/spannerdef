@@ -142,7 +142,15 @@ func (db *SpannerDatabase) ExecDDLsContext(ctx context.Context, ddls []string) e
 		return nil
 	}
 
-	return db.executeDDLBatch(ctx, ddls)
+	for _, batch := range ddlBatches(ddls) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := db.executeDDLBatch(ctx, batch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *SpannerDatabase) Close() error {
