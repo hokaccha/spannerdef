@@ -70,6 +70,13 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 	currentSchema = filterSchema(currentSchema, config)
 	desiredSchema = filterSchema(desiredSchema, config)
 
+	for name, desired := range desiredSchema.Tables {
+		if current, ok := currentSchema.Tables[name]; ok &&
+			(current.ParentTable != desired.ParentTable || current.InterleaveNotEnforced != desired.InterleaveNotEnforced) {
+			return nil, fmt.Errorf("unsupported interleave change for table %s; apply it explicitly before updating the desired schema", name)
+		}
+	}
+
 	ddls := GenerateDDLs(currentSchema, desiredSchema)
 	return ddls, nil
 }
