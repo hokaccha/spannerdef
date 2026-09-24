@@ -1,0 +1,237 @@
+package spannerdef
+
+import (
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+
+	"github.com/cloudspannerecosystem/memefish/ast"
+)
+
+// SchemaObject retains the complete parsed definition of a non-table object.
+// Its AST is private so callers cannot accidentally discard supported clauses.
+type SchemaObject struct {
+	Name       string
+	Kind       string
+	SchemaName string
+	TableName  string
+	definition ast.DDL
+}
+
+func schemaObject(stmt ast.DDL) *SchemaObject {
+	o := &SchemaObject{definition: stmt}
+	switch s := stmt.(type) {
+	case *ast.CreateSequence:
+		o.Kind, o.Name, o.SchemaName = "SEQUENCE", s.Name.SQL(), pathSchemaName(s.Name)
+		s.IfNotExists = false
+	case *ast.CreateView:
+		o.Kind, o.Name, o.SchemaName = "VIEW", s.Name.SQL(), pathSchemaName(s.Name)
+		s.OrReplace = false
+	case *ast.CreateSearchIndex:
+		o.Kind, o.Name, o.SchemaName, o.TableName = "SEARCH INDEX", s.Name.SQL(), pathSchemaName(s.Name), s.TableName.SQL()
+	case *ast.CreateVectorIndex:
+		o.Kind, o.Name, o.TableName = "VECTOR INDEX", s.Name.SQL(), s.TableName.SQL()
+		s.IfNotExists = false
+	case *ast.CreateChangeStream:
+		o.Kind, o.Name = "CHANGE STREAM", s.Name.SQL()
+	case *ast.CreatePropertyGraph:
+		o.Kind, o.Name = "PROPERTY GRAPH", s.Name.SQL()
+		s.IfNotExists, s.OrReplace = false, false
+	default:
+		return nil
+	}
+	return o
+}
+
+func objectKey(name string) string { return strings.ToLower(tableFilterName(name)) }
+
+func normalizeObject(o *SchemaObject) error {
+	var optionError error
+	ast.Inspect(o.definition, func(node ast.Node) bool {
+		if opts, ok := node.(*ast.Options); ok {
+			seen := map[string]bool{}
+			for _, r := range opts.Records {
+				key := strings.ToLower(r.Name.Name)
+				if seen[key] {
+					optionError = fmt.Errorf("duplicate option %s on %s", key, o.Name)
+				}
+				seen[key] = true
+			}
+		}
+		return true
+	})
+	if optionError != nil {
+		return optionError
+	}
+	if s, ok := o.definition.(*ast.CreateSequence); ok {
+		values := optionValues(s.Options)
+		for _, param := range s.Params {
+			switch p := param.(type) {
+			case *ast.BitReversedPositive:
+				values["sequence_kind"] = &ast.StringLiteral{Value: "bit_reversed_positive"}
+			case *ast.StartCounterWith:
+				values["start_with_counter"] = p.Counter
+			case *ast.SkipRange:
+				values["skip_range_min"], values["skip_range_max"] = p.Min, p.Max
+			}
+		}
+		s.Params = nil
+		s.Options = makeOptions(values)
+	}
+	// Preserve literal case/content. Normalize option ordering and unordered
+	// membership lists without rewriting expressions or ordered keys.
+	ast.Inspect(o.definition, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.Options:
+			for _, r := range n.Records {
+				r.Name.Name = strings.ToLower(r.Name.Name)
+			}
+			sort.Slice(n.Records, func(i, j int) bool { return n.Records[i].Name.Name < n.Records[j].Name.Name })
+		case *ast.Storing:
+			sort.Slice(n.Columns, func(i, j int) bool { return n.Columns[i].SQL() < n.Columns[j].SQL() })
+		case *ast.ChangeStreamForTables:
+			sort.Slice(n.Tables, func(i, j int) bool { return n.Tables[i].TableName.SQL() < n.Tables[j].TableName.SQL() })
+			for _, table := range n.Tables {
+				sort.Slice(table.Columns, func(i, j int) bool { return table.Columns[i].SQL() < table.Columns[j].SQL() })
+			}
+		}
+		return true
+	})
+	return nil
+}
+
+func optionValues(opts *ast.Options) map[string]ast.Expr {
+	result := map[string]ast.Expr{}
+	if opts != nil {
+		for _, r := range opts.Records {
+			result[strings.ToLower(r.Name.Name)] = r.Value
+		}
+	}
+	return result
+}
+func makeOptions(values map[string]ast.Expr) *ast.Options {
+	if len(values) == 0 {
+		return nil
+	}
+	result := &ast.Options{}
+	var names []string
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		result.Records = append(result.Records, &ast.OptionsDef{Name: &ast.Ident{Name: name}, Value: values[name]})
+	}
+	return result
+}
+func sameObject(a, b *SchemaObject) bool {
+	return a.Kind == b.Kind && equalGenerationAST(reflect.ValueOf(a.definition), reflect.ValueOf(b.definition))
+}
+
+// objectReferences walks actual table/sequence reference nodes, not identifier
+// text in literals or SELECT aliases. WITH bindings are scoped to their query.
+func objectReferences(node ast.Node) map[string]bool {
+	refs := map[string]bool{}
+	var visit func(ast.Node, map[string]bool)
+	visit = func(root ast.Node, scope map[string]bool) {
+		ast.Inspect(root, func(node ast.Node) bool {
+			switch n := node.(type) {
+			case *ast.Query:
+				local := map[string]bool{}
+				for k, v := range scope {
+					local[k] = v
+				}
+				if n.With != nil {
+					for _, cte := range n.With.CTEs {
+						visit(cte.QueryExpr, local)
+						local[objectKey(cte.Name.SQL())] = true
+					}
+				}
+				copyQuery := *n
+				copyQuery.With = nil
+				visitQueryParts := []ast.Node{copyQuery.Query}
+				if n.OrderBy != nil {
+					visitQueryParts = append(visitQueryParts, n.OrderBy)
+				}
+				for _, p := range n.PipeOperators {
+					visitQueryParts = append(visitQueryParts, p)
+				}
+				for _, part := range visitQueryParts {
+					visit(part, local)
+				}
+				return false
+			case *ast.TableName:
+				if !scope[objectKey(n.Table.SQL())] {
+					refs[objectKey(n.Table.SQL())] = true
+				}
+			case *ast.PathTableExpr:
+				// Qualified schema names are dependencies; implicit UNNEST paths are
+				// resolved against the known schema when constructing the plan.
+				refs[objectKey(n.Path.SQL())] = true
+			case *ast.SequenceArg:
+				refs[objectKey(n.Expr.SQL())] = true
+			case *ast.PropertyGraphElement:
+				refs[objectKey(n.Name.SQL())] = true
+			case *ast.CreateSearchIndex:
+				refs[objectKey(n.TableName.SQL())] = true
+				if n.Interleave != nil {
+					refs[objectKey(n.Interleave.TableName.SQL())] = true
+				}
+			case *ast.CreateVectorIndex:
+				refs[objectKey(n.TableName.SQL())] = true
+			case *ast.ChangeStreamForTable:
+				refs[objectKey(n.TableName.SQL())] = true
+			}
+			return true
+		})
+	}
+	if node != nil {
+		visit(node, map[string]bool{})
+	}
+	return refs
+}
+
+func orderedObjects(objects map[string]*SchemaObject) ([]*SchemaObject, error) {
+	byKey := map[string]*SchemaObject{}
+	var names []string
+	for _, o := range objects {
+		byKey[objectKey(o.Name)] = o
+		names = append(names, objectKey(o.Name))
+	}
+	sort.Strings(names)
+	state := map[string]int{}
+	var result []*SchemaObject
+	var visit func(string) error
+	visit = func(name string) error {
+		if state[name] == 2 {
+			return nil
+		}
+		if state[name] == 1 {
+			return fmt.Errorf("cyclic schema object dependency involving %s", name)
+		}
+		state[name] = 1
+		o := byKey[name]
+		var deps []string
+		for dep := range objectReferences(o.definition) {
+			if byKey[dep] != nil {
+				deps = append(deps, dep)
+			}
+		}
+		sort.Strings(deps)
+		for _, dep := range deps {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		state[name] = 2
+		result = append(result, o)
+		return nil
+	}
+	for _, name := range names {
+		if err := visit(name); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
