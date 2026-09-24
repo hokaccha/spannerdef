@@ -606,6 +606,14 @@ func generateCreateIndex(index *Index) string {
 // generateAlterTable generates ALTER TABLE DDLs for differences between tables
 func generateAlterTable(current, desired *Table) []string {
 	var ddls []string
+	if current.ParentTable != "" && canonicalOnDelete(current.OnDelete) != canonicalOnDelete(desired.OnDelete) {
+		ddls = append(ddls, "ALTER TABLE "+desired.Name+" SET "+canonicalOnDelete(desired.OnDelete))
+	}
+
+	// Removing a parent policy is a prerequisite for disabling child CASCADE.
+	if current.RowDeletionPolicyColumn != "" && desired.RowDeletionPolicyColumn == "" {
+		ddls = append(ddls, "ALTER TABLE "+desired.Name+" DROP ROW DELETION POLICY")
+	}
 
 	// Add dependencies before generated columns, regardless of declaration order.
 	columns := make([]*Column, 0, len(desired.Columns))
@@ -794,4 +802,11 @@ var optionKeyValueRe = regexp.MustCompile(`(\w+)\s*=\s*(?:"[^"]*"|[^,)]+)`)
 // and returns "OPTIONS (key1 = null, key2 = null)" for removing options.
 func nullifyOptions(optionsSQL string) string {
 	return optionKeyValueRe.ReplaceAllString(optionsSQL, "${1} = null")
+}
+
+func canonicalOnDelete(action string) string {
+	if action == "" {
+		return "ON DELETE NO ACTION"
+	}
+	return action
 }
