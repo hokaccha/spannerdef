@@ -121,28 +121,18 @@ func TestSecondSignalTerminatesBlockedOutput(t *testing.T) {
 				t.Fatalf("first signal terminated blocked export: %v; stderr: %s", err, stderr.String())
 			case <-time.After(200 * time.Millisecond):
 			}
-			// Restoration runs in an AfterFunc goroutine. Retry within a bound
-			// so scheduling that goroutine cannot make the test flaky.
-			deadline := time.NewTimer(5 * time.Second)
-			defer deadline.Stop()
-			for {
-				if err := cmd.Process.Signal(second); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
-					t.Fatal(err)
-				}
-				select {
-				case err := <-finished:
-					waited = true
-					var exit *exec.ExitError
-					require.ErrorAs(t, err, &exit, "stderr: %s", stderr.String())
-					status, ok := exit.Sys().(syscall.WaitStatus)
-					require.True(t, ok)
-					require.True(t, status.Signaled(), "expected signal termination, got %v; stderr: %s", err, stderr.String())
-					require.Equal(t, second, status.Signal())
-					return
-				case <-time.After(100 * time.Millisecond):
-				case <-deadline.C:
-					t.Fatal("repeated signal did not terminate blocked export")
-				}
+			require.NoError(t, cmd.Process.Signal(second))
+			select {
+			case err := <-finished:
+				waited = true
+				var exit *exec.ExitError
+				require.ErrorAs(t, err, &exit, "stderr: %s", stderr.String())
+				status, ok := exit.Sys().(syscall.WaitStatus)
+				require.True(t, ok)
+				require.True(t, status.Signaled(), "expected signal termination, got %v; stderr: %s", err, stderr.String())
+				require.Equal(t, second, status.Signal())
+			case <-time.After(5 * time.Second):
+				t.Fatal("second signal did not terminate blocked export")
 			}
 		})
 	}
