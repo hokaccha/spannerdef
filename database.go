@@ -53,7 +53,9 @@ func RunDDLsContext(ctx context.Context, d Database, ddls []string, enableDrop b
 		return err
 	}
 	if !quiet {
-		fmt.Println("-- Apply --")
+		if _, err := fmt.Fprintln(os.Stdout, "-- Apply --"); err != nil {
+			return fmt.Errorf("write apply plan: %w", err)
+		}
 	}
 
 	plan, err := planDDLs(ddls, enableDrop)
@@ -64,12 +66,16 @@ func RunDDLsContext(ctx context.Context, d Database, ddls []string, enableDrop b
 	for _, step := range plan {
 		if step.Skip {
 			if !quiet {
-				fmt.Printf("-- Skipped: %s;\n", step.SQL)
+				if _, err := fmt.Fprintf(os.Stdout, "-- Skipped: %s;\n", step.SQL); err != nil {
+					return fmt.Errorf("write apply plan: %w", err)
+				}
 			}
 			continue
 		}
 		if !quiet {
-			fmt.Printf("%s;\n", step.SQL)
+			if _, err := fmt.Fprintf(os.Stdout, "%s;\n", step.SQL); err != nil {
+				return fmt.Errorf("write apply plan: %w", err)
+			}
 		}
 		validDDLs = append(validDDLs, step.SQL)
 	}
