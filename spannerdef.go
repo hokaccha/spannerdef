@@ -201,10 +201,15 @@ func ParseFiles(files []string) []string {
 
 func ReadFiles(filepaths []string) (string, error) {
 	var result strings.Builder
-	for _, filepath := range filepaths {
+	for i, filepath := range filepaths {
 		f, err := ReadFile(filepath)
 		if err != nil {
 			return "", err
+		}
+		// SQL line comments must not consume the next file. A single file is
+		// returned verbatim, and no statement terminators are invented.
+		if i > 0 {
+			result.WriteByte('\n')
 		}
 		_, err = result.WriteString(f)
 		if err != nil {
@@ -219,7 +224,10 @@ func ReadFile(filepath string) (string, error) {
 	var buf []byte
 
 	if filepath == "-" {
-		stat, _ := os.Stdin.Stat()
+		stat, statErr := os.Stdin.Stat()
+		if statErr != nil {
+			return "", fmt.Errorf("failed to stat stdin: %w", statErr)
+		}
 		if (stat.Mode() & os.ModeCharDevice) != 0 {
 			return "", fmt.Errorf("stdin is not piped")
 		}
