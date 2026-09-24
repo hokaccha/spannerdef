@@ -51,6 +51,7 @@ type Index struct {
 
 // Constraint represents a table constraint
 type Constraint struct {
+	NotEnforced      bool
 	Name             string
 	Type             string   // "CHECK", "FOREIGN KEY", etc.
 	Expression       string   // For CHECK constraint
@@ -234,6 +235,7 @@ func registerTableConstraint(table *Table, tc *ast.TableConstraint) {
 			ReferenceTable:   getPathName(c.ReferenceTable),
 			ReferenceColumns: refColumns,
 			OnDelete:         string(c.OnDelete),
+			NotEnforced:      c.Enforcement == ast.NotEnforced,
 		}
 	}
 }
@@ -515,6 +517,9 @@ func generateCreateTable(table *Table) string {
 				ddl.WriteString(" (")
 				ddl.WriteString(strings.Join(constraint.ReferenceColumns, ", "))
 				ddl.WriteString(")")
+				if constraint.NotEnforced {
+					ddl.WriteString(" NOT ENFORCED")
+				}
 				if constraint.OnDelete != "" {
 					ddl.WriteString(" ")
 					ddl.WriteString(constraint.OnDelete)
@@ -604,7 +609,8 @@ func generateAlterTable(current, desired *Table) []string {
 				(strings.Join(currentConstraint.Columns, ",") != strings.Join(desiredConstraint.Columns, ",") ||
 					currentConstraint.ReferenceTable != desiredConstraint.ReferenceTable ||
 					strings.Join(currentConstraint.ReferenceColumns, ",") != strings.Join(desiredConstraint.ReferenceColumns, ",") ||
-					currentConstraint.OnDelete != desiredConstraint.OnDelete) {
+					currentConstraint.OnDelete != desiredConstraint.OnDelete ||
+					currentConstraint.NotEnforced != desiredConstraint.NotEnforced) {
 				needsDrop = true
 			}
 		}
@@ -660,7 +666,8 @@ func generateAlterTable(current, desired *Table) []string {
 				(strings.Join(currentConstraint.Columns, ",") != strings.Join(desiredConstraint.Columns, ",") ||
 					currentConstraint.ReferenceTable != desiredConstraint.ReferenceTable ||
 					strings.Join(currentConstraint.ReferenceColumns, ",") != strings.Join(desiredConstraint.ReferenceColumns, ",") ||
-					currentConstraint.OnDelete != desiredConstraint.OnDelete) {
+					currentConstraint.OnDelete != desiredConstraint.OnDelete ||
+					currentConstraint.NotEnforced != desiredConstraint.NotEnforced) {
 				needsRecreate = true
 			}
 		}
@@ -677,6 +684,9 @@ func generateAlterTable(current, desired *Table) []string {
 					strings.Join(desiredConstraint.ReferenceColumns, ", "))
 				if desiredConstraint.OnDelete != "" {
 					ddl += " " + desiredConstraint.OnDelete
+				}
+				if desiredConstraint.NotEnforced {
+					ddl += " NOT ENFORCED"
 				}
 				ddls = append(ddls, ddl)
 			}
