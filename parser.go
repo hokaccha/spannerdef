@@ -245,6 +245,9 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	if stmt.RowDeletionPolicy != nil && stmt.RowDeletionPolicy.RowDeletionPolicy != nil {
 		policy := stmt.RowDeletionPolicy.RowDeletionPolicy
 		table.RowDeletionPolicyColumn = policy.ColumnName.SQL()
+		if column := columnNames[strings.ToLower(policy.ColumnName.Name)]; column != nil {
+			table.RowDeletionPolicyColumn = column.Name
+		}
 		// Convert string value to int64
 		days, err := strconv.ParseInt(policy.NumDays.Value, policy.NumDays.Base, 64)
 		if err != nil {
@@ -571,7 +574,7 @@ func generateCreateTable(table *Table) string {
 	}
 
 	// Add row deletion policy if present
-	if table.RowDeletionPolicyColumn != "" && table.RowDeletionPolicyDays > 0 {
+	if table.RowDeletionPolicyColumn != "" {
 		ddl.WriteString(",\n")
 		fmt.Fprintf(&ddl, "ROW DELETION POLICY (OLDER_THAN(%s, INTERVAL %d DAY))",
 			table.RowDeletionPolicyColumn, table.RowDeletionPolicyDays)
@@ -609,7 +612,6 @@ func generateAlterTable(current, desired *Table) []string {
 	if current.ParentTable != "" && canonicalOnDelete(current.OnDelete) != canonicalOnDelete(desired.OnDelete) {
 		ddls = append(ddls, "ALTER TABLE "+desired.Name+" SET "+canonicalOnDelete(desired.OnDelete))
 	}
-
 	// Removing a parent policy is a prerequisite for disabling child CASCADE.
 	if current.RowDeletionPolicyColumn != "" && desired.RowDeletionPolicyColumn == "" {
 		ddls = append(ddls, "ALTER TABLE "+desired.Name+" DROP ROW DELETION POLICY")
@@ -653,6 +655,14 @@ func generateAlterTable(current, desired *Table) []string {
 			}
 			ddls = append(ddls, def)
 		}
+	}
+
+	if desired.RowDeletionPolicyColumn != "" && (current.RowDeletionPolicyColumn != desired.RowDeletionPolicyColumn || current.RowDeletionPolicyDays != desired.RowDeletionPolicyDays) {
+		action := "REPLACE"
+		if current.RowDeletionPolicyColumn == "" {
+			action = "ADD"
+		}
+		ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s %s ROW DELETION POLICY (OLDER_THAN(%s, INTERVAL %d DAY))", desired.Name, action, desired.RowDeletionPolicyColumn, desired.RowDeletionPolicyDays))
 	}
 
 	// Handle constraints
