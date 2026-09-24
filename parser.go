@@ -692,17 +692,45 @@ func generateAlterTable(current, desired *Table) []string {
 	// Handle column type changes and OPTIONS changes
 	for colName, desiredCol := range desired.Columns {
 		if currentCol, exists := current.Columns[colName]; exists {
+			// Switch between ordinary and commit-timestamp defaults without
+			// leaving an incompatible default installed while options change.
+			currentDefault := currentCol.Default
+			optionsChanged := currentCol.Options != desiredCol.Options
+			pending := "(PENDING_COMMIT_TIMESTAMP())"
+			switchMode := optionsChanged && currentDefault != "" && !sameDefaultSQL(currentDefault, desiredCol.Default) && (sameDefaultSQL(currentDefault, pending) || sameDefaultSQL(desiredCol.Default, pending))
+			optionSQL := desiredCol.Options
+			if optionSQL == "" {
+				optionSQL = nullifyOptions(currentCol.Options)
+			}
+			optionsFirst := optionsChanged && (switchMode || desiredCol.Default != "")
+			if switchMode {
+				ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT", desired.Name, colName))
+				currentDefault = ""
+			}
+			if optionsFirst {
+				ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET %s", desired.Name, colName, optionSQL))
+			}
+
 			// Check if column type has changed
-			if currentCol.Type != desiredCol.Type {
+			if currentCol.Type != desiredCol.Type || currentCol.NotNull != desiredCol.NotNull {
 				def := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s", desired.Name, colName, desiredCol.Type)
 				if desiredCol.NotNull {
 					def += " NOT NULL"
 				}
+				if desiredCol.Default != "" {
+					def += " DEFAULT " + desiredCol.Default
+				}
 				ddls = append(ddls, def)
+			} else if !sameDefaultSQL(currentDefault, desiredCol.Default) {
+				if desiredCol.Default == "" {
+					ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT", desired.Name, colName))
+				} else {
+					ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s", desired.Name, colName, desiredCol.Default))
+				}
 			}
 
 			// Handle OPTIONS changes independently from type changes
-			if currentCol.Options != desiredCol.Options {
+			if !optionsFirst && currentCol.Options != desiredCol.Options {
 				if desiredCol.Options != "" {
 					ddls = append(ddls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET %s",
 						desired.Name, colName, desiredCol.Options))
