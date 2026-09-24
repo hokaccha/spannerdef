@@ -17,6 +17,9 @@ func GenerateDDLsChecked(current, desired *Schema) ([]string, error) {
 }
 
 func generateObjectDDLs(current, desired *Schema) ([]string, error) {
+	if err := validateCaseOnlyNameChanges(current, desired); err != nil {
+		return nil, err
+	}
 	if err := validateObjectNames(current, desired); err != nil {
 		return nil, err
 	}

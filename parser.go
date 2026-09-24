@@ -19,6 +19,15 @@ type Schema struct {
 	Indexes      map[string]*Index
 }
 
+// parsedSchema keeps parser-only filtering metadata out of the public Schema.
+type parsedSchema struct {
+	*Schema
+	// Retain excluded table names, including references from indexes and ALTERs,
+	// so filtering cannot hide a case-only change involving a managed table.
+	// The excluded definitions themselves remain outside validation.
+	excludedTableNames map[string]bool
+}
+
 // Table represents a Spanner table
 type Table struct {
 	SchemaName              string
@@ -75,10 +84,14 @@ type Constraint struct {
 
 // ParseDDLs parses DDL statements and returns a Schema
 func ParseDDLs(ddls string) (*Schema, error) {
-	return parseDDLs(ddls, GeneratorConfig{})
+	parsed, err := parseDDLs(ddls, GeneratorConfig{})
+	if err != nil {
+		return nil, err
+	}
+	return parsed.Schema, nil
 }
 
-func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
+func parseDDLs(ddls string, config GeneratorConfig) (*parsedSchema, error) {
 	schema := &Schema{
 		Objects:      make(map[string]*SchemaObject),
 		NamedSchemas: make(map[string]bool),
@@ -86,8 +99,9 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 		Indexes:      make(map[string]*Index),
 	}
 
+	result := &parsedSchema{Schema: schema, excludedTableNames: make(map[string]bool)}
 	if strings.TrimSpace(ddls) == "" {
-		return schema, nil
+		return result, nil
 	}
 
 	// Parse using memefish
@@ -101,6 +115,7 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	included := make([]ast.DDL, 0, len(parsed))
 	for _, stmt := range parsed {
 		if tableName := ddlTableName(stmt); tableName != "" && !shouldIncludeTable(tableName, config) {
+			result.excludedTableNames[tableName] = true
 			continue
 		}
 		included = append(included, stmt)
@@ -177,7 +192,7 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 		}
 	}
 
-	return schema, nil
+	return result, nil
 }
 
 // processCreateTable processes CREATE TABLE statement
