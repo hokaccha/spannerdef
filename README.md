@@ -238,6 +238,7 @@ Because spannerdef distinguishes tables/indexes by name, it does NOT support:
 - RENAME INDEX
 - Complex schema changes that require data migration
 - Existing primary key/index definition changes or generated/identity/ON UPDATE definition changes
+- Changing only the case of an existing schema, table, column, index, or constraint name (Spanner rejects names that differ only in case, so these return explicit errors)
 - SEARCH/VECTOR INDEX, VIEW, SEQUENCE, CHANGE STREAM, PROPERTY GRAPH, database/table options, and other unmodeled schema objects (these return explicit errors)
 
 To handle these cases, you would need to apply changes manually and use `--export` to capture the new schema.

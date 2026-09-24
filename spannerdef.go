@@ -85,6 +85,10 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 	currentSchema.NamedSchemas = existingNamespaces
 	desiredSchema = filterSchema(desiredSchema, config)
 
+	if err := validateCaseOnlyNameChanges(currentSchema, desiredSchema); err != nil {
+		return nil, err
+	}
+
 	normalizeImplicitPrimaryKeys(currentSchema, desiredSchema)
 
 	if err := validateGenerationChanges(currentSchema, desiredSchema); err != nil {
