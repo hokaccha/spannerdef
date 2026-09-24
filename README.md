@@ -11,9 +11,16 @@ Idempotent Google Cloud Spanner schema management by SQL, inspired by [sqldef](h
 
 ### Supported Operations
 
-- **Tables**: CREATE TABLE, DROP TABLE
-- **Columns**: ADD COLUMN, DROP COLUMN
-- **Indexes**: CREATE INDEX, DROP INDEX
+- **Schemas**: create named schemas and use qualified object names
+- **Tables**: create/drop tables, preserve explicit empty keys and implicit rowid keys, change interleave ON DELETE actions
+- **Columns**: add/drop columns, change supported types, defaults, nullability, and options; preserve generated, identity, hidden, and ON UPDATE definitions
+- **Indexes**: create/drop regular, unique, null-filtered, and expression indexes; preserve key directions and STORING columns
+- **Constraints**: add/drop/recreate CHECK and foreign key constraints, including enforcement and ON DELETE actions
+- **TTL**: add/replace/drop row deletion policies, including zero-day policies
+
+Desired schema files use CREATE declarations (and ALTER TABLE ADD CONSTRAINT as emitted by Spanner exports). They are schema descriptions, not a sequential migration script. Unsupported statements and definition changes return errors before execution.
+
+Without `--enable-drop`, table, index, column, and standalone constraint removals are skipped. Replacing a constraint still drops and recreates that constraint. Preview and execution use the same filtering. If any removal is skipped, plans that also alter columns, TTL, delete actions, or add constraints are conservatively rejected before execution: retained indexes, constraints, or interleaved children may block those changes. Keep the existing objects in the desired schema or explicitly enable their removal. Other changes, including enabling CASCADE or shortening TTL, can affect data and should be reviewed with `--dry-run`.
 
 ## Installation
 
@@ -230,6 +237,8 @@ Because spannerdef distinguishes tables/indexes by name, it does NOT support:
 - RENAME TABLE
 - RENAME INDEX
 - Complex schema changes that require data migration
+- Existing primary key/index definition changes or generated/identity/ON UPDATE definition changes
+- SEARCH/VECTOR INDEX, VIEW, SEQUENCE, CHANGE STREAM, PROPERTY GRAPH, database/table options, and other unmodeled schema objects (these return explicit errors)
 
 To handle these cases, you would need to apply changes manually and use `--export` to capture the new schema.
 
@@ -239,8 +248,9 @@ spannerdef is built with the following components:
 
 - **memefish**: Spanner SQL parser for parsing DDL statements
 - **Google Cloud Spanner Go SDK**: For connecting to and managing Spanner databases
-- **schema package**: Core logic for schema comparison and DDL generation
-- **database/spanner package**: Spanner-specific database operations
+- **parser.go / ddl_order.go**: schema models, comparison, and dependency ordering
+- **ddl_plan.go / database.go**: shared preview/execution plan and drop filtering
+- **spanner.go**: Spanner database administration
 
 ## License
 
