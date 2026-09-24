@@ -184,3 +184,18 @@ func TestStreamReferenceCaseNoOp(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, plan)
 }
+
+func TestObjectExpressionFieldCaseIsSignificant(t *testing.T) {
+	cases := []string{
+		`CREATE VIEW V SQL SECURITY INVOKER AS SELECT (JSON '{"Foo":1,"foo":2}').Foo AS Value`,
+		`CREATE TABLE T (Id INT64 NOT NULL, J JSON) PRIMARY KEY(Id); CREATE VIEW V SQL SECURITY INVOKER AS SELECT T.J.Foo AS Value FROM T`,
+		`CREATE TABLE T (Id INT64 NOT NULL, J JSON) PRIMARY KEY(Id); CREATE PROPERTY GRAPH G NODE TABLES(T PROPERTIES(J.Foo AS Value))`,
+	}
+	for _, initial := range cases {
+		desired := strings.Replace(initial, ".Foo", ".foo", 1)
+		plan, err := GenerateIdempotentDDLs(desired, initial, GeneratorConfig{})
+		require.NoError(t, err)
+		require.Len(t, plan, 1)
+		require.Contains(t, plan[0], "CREATE OR REPLACE")
+	}
+}

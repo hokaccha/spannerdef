@@ -149,9 +149,56 @@ func sameObject(a, b *SchemaObject) bool {
 		if err != nil {
 			return ddl
 		}
-		ast.Inspect(node, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok {
+		// Only schema identities are case-insensitive. Arbitrary expression
+		// paths can select case-sensitive JSON/proto fields.
+		lowerPath := func(path *ast.Path) {
+			for _, id := range path.Idents {
 				id.Name = strings.ToLower(id.Name)
+			}
+		}
+		lowerIdent := func(id *ast.Ident) {
+			if id != nil {
+				id.Name = strings.ToLower(id.Name)
+			}
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
+			switch value := n.(type) {
+			case *ast.CreateSequence:
+				lowerPath(value.Name)
+			case *ast.CreateView:
+				lowerPath(value.Name)
+			case *ast.CreateSearchIndex:
+				lowerPath(value.Name)
+				lowerPath(value.TableName)
+			case *ast.CreateVectorIndex:
+				lowerIdent(value.Name)
+				lowerIdent(value.TableName)
+			case *ast.CreatePropertyGraph:
+				lowerIdent(value.Name)
+			case *ast.CreateChangeStream:
+				lowerIdent(value.Name)
+			case *ast.TableName:
+				lowerIdent(value.Table)
+			case *ast.SequenceArg:
+				switch name := value.Expr.(type) {
+				case *ast.Ident:
+					lowerIdent(name)
+				case *ast.Path:
+					lowerPath(name)
+				}
+			case *ast.PropertyGraphElement:
+				lowerIdent(value.Name)
+				lowerIdent(value.Alias)
+			case *ast.PropertyGraphElementLabelLabelName:
+				lowerIdent(value.Name)
+			case *ast.PropertyGraphSourceKey:
+				lowerIdent(value.ElementReference)
+			case *ast.PropertyGraphDestinationKey:
+				lowerIdent(value.ElementReference)
+			case *ast.GraphTableExpr:
+				lowerPath(value.GraphName)
+			case *ast.GQLGraphClause:
+				lowerPath(value.PropertyGraphName)
 			}
 			return true
 		})
