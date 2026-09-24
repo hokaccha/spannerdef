@@ -2,9 +2,8 @@ package spannerdef
 
 import (
 	"context"
-	"golang.org/x/oauth2"
-	"google.golang.org/api/option"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -260,27 +259,27 @@ func TestSpannerDatabase_RowDeletionPolicyWithInterleave(t *testing.T) {
 
 func TestClientOptions(t *testing.T) {
 	ctx := context.Background()
-	base := option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test"}))
+	client := &http.Client{}
 	plain := Config{ProjectID: "p", InstanceID: "i", DatabaseID: "d"}
 	impersonated := Config{ProjectID: "p", InstanceID: "i", DatabaseID: "d", ImpersonateServiceAccount: "sa@example.iam.gserviceaccount.com"}
 
 	t.Run("no impersonation returns no options", func(t *testing.T) {
 		t.Setenv("SPANNER_EMULATOR_HOST", "")
-		opts, err := clientOptions(ctx, plain, base)
+		opts, err := clientOptionsWithHTTPClient(ctx, plain, client)
 		assert.NoError(t, err)
 		assert.Nil(t, opts)
 	})
 
-	t.Run("impersonation returns a token source option", func(t *testing.T) {
+	t.Run("impersonation returns a context-aware credential option", func(t *testing.T) {
 		t.Setenv("SPANNER_EMULATOR_HOST", "")
-		opts, err := clientOptions(ctx, impersonated, base)
+		opts, err := clientOptionsWithHTTPClient(ctx, impersonated, client)
 		assert.NoError(t, err)
 		assert.Len(t, opts, 1)
 	})
 
 	t.Run("the emulator ignores credentials so impersonation is skipped", func(t *testing.T) {
 		t.Setenv("SPANNER_EMULATOR_HOST", "localhost:9010")
-		opts, err := clientOptions(ctx, impersonated, base)
+		opts, err := clientOptionsWithHTTPClient(ctx, impersonated, client)
 		assert.NoError(t, err)
 		assert.Nil(t, opts)
 	})

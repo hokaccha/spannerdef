@@ -3,12 +3,17 @@ package spannerdef
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
+	"cloud.google.com/go/auth"
+	"cloud.google.com/go/auth/credentials"
+	"cloud.google.com/go/auth/credentials/impersonate"
 	dbadmin "cloud.google.com/go/spanner/admin/database/apiv1"
 	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
-	"google.golang.org/api/impersonate"
 	"google.golang.org/api/option"
 )
 
@@ -17,24 +22,106 @@ import (
 // their defaults (Application Default Credentials, or the emulator when
 // SPANNER_EMULATOR_HOST is set). With impersonation it mints short-lived
 // credentials for the target service account through the IAM Credentials API
-// and hands them to the clients as a token source, which both the classic and
-// the new auth transports honour. The emulator ignores credentials, so
+// and hands them to the clients as context-aware credentials. The emulator ignores credentials, so
 // impersonation is skipped there instead of failing to configure.
-//
-// base options configure the IAM Credentials client used for minting; tests
-// pass a static token source, production passes nothing (ADC).
-func clientOptions(ctx context.Context, config Config, base ...option.ClientOption) ([]option.ClientOption, error) {
+func clientOptions(ctx context.Context, config Config) ([]option.ClientOption, error) {
+	return clientOptionsWithHTTPClient(ctx, config, nil)
+}
+
+// A supplied client is used by local tests to serve the IAM request. In
+// production, NewCredentials discovers ADC and builds its authenticated client.
+func clientOptionsWithHTTPClient(ctx context.Context, config Config, client *http.Client) ([]option.ClientOption, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if config.ImpersonateServiceAccount == "" || os.Getenv("SPANNER_EMULATOR_HOST") != "" {
 		return nil, nil
 	}
-	tokenSource, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
+	const scope = "https://www.googleapis.com/auth/cloud-platform"
+	impersonation := &impersonate.CredentialsOptions{
 		TargetPrincipal: config.ImpersonateServiceAccount,
-		Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
-	}, base...)
+		Scopes:          []string{scope},
+		Client:          client,
+	}
+	if client == nil {
+		// Resolve ADC once, rather than rediscovering it at every refresh.
+		base, err := credentials.DetectDefault(&credentials.DetectOptions{
+			Scopes: []string{scope}, UseSelfSignedJWT: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to impersonate %s: %w", config.ImpersonateServiceAccount, err)
+		}
+		impersonation.Credentials = base
+	}
+	creds, err := impersonate.NewCredentials(impersonation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to impersonate %s: %w", config.ImpersonateServiceAccount, err)
 	}
-	return []option.ClientOption{option.WithTokenSource(tokenSource)}, nil
+	first := creds.TokenProvider
+	creds.TokenProvider = &refreshingImpersonation{
+		newProvider: func() (auth.TokenProvider, error) {
+			if first != nil {
+				provider := first
+				first = nil
+				return provider, nil
+			}
+			fresh, err := impersonate.NewCredentials(impersonation)
+			if err != nil {
+				return nil, err
+			}
+			return fresh.TokenProvider, nil
+		},
+	}
+	return []option.ClientOption{option.WithAuthCredentials(creds)}, nil
+}
+
+// refreshingImpersonation caches successful tokens while keeping the network
+// request outside the mutex. Waiters can stop on their own RPC deadlines. A
+// failed or canceled refresh leaves the provider reusable for the next call.
+type refreshingImpersonation struct {
+	mu          sync.Mutex
+	token       *auth.Token
+	refreshDone chan struct{}
+	newProvider func() (auth.TokenProvider, error)
+}
+
+func (r *refreshingImpersonation) Token(ctx context.Context) (*auth.Token, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		r.mu.Lock()
+		if r.token != nil && r.token.Value != "" && (r.token.Expiry.IsZero() || time.Until(r.token.Expiry) > 30*time.Second) {
+			token := r.token
+			r.mu.Unlock()
+			return token, nil
+		}
+		if done := r.refreshDone; done != nil {
+			r.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-done:
+				continue
+			}
+		}
+		done := make(chan struct{})
+		r.refreshDone = done
+		r.mu.Unlock()
+		provider, err := r.newProvider()
+		var token *auth.Token
+		if err == nil {
+			token, err = provider.Token(ctx)
+		}
+		r.mu.Lock()
+		if err == nil {
+			r.token = token
+		}
+		r.refreshDone = nil
+		close(done)
+		r.mu.Unlock()
+		return token, err
+	}
 }
 
 type SpannerDatabase struct {
@@ -67,9 +154,9 @@ func NewDatabaseContext(ctx context.Context, config Config, options ...DatabaseO
 		}
 	}
 
-	// Token sources outlive construction: cancelling this setup context must
-	// not poison subsequent credential refreshes on a reused client.
-	opts, err := clientOptions(context.WithoutCancel(ctx), config)
+	// The credential provider outlives construction; each token request gets
+	// its own RPC context from the gRPC transport.
+	opts, err := clientOptions(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +257,7 @@ func NewAdminDatabaseContext(ctx context.Context, config Config) (*SpannerAdminD
 		return nil, err
 	}
 
-	opts, err := clientOptions(context.WithoutCancel(ctx), config)
+	opts, err := clientOptions(ctx, config)
 	if err != nil {
 		return nil, err
 	}
