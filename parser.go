@@ -13,8 +13,9 @@ import (
 
 // Schema represents a database schema
 type Schema struct {
-	// Retain excluded table identities so filtering cannot hide a case-only
-	// rename of a managed table. Their definitions remain outside validation.
+	// Retain excluded table names, including references from indexes and ALTERs,
+	// so filtering cannot hide a case-only change involving a managed table.
+	// The excluded definitions themselves remain outside validation.
 	excludedTableNames map[string]bool
 
 	Objects      map[string]*SchemaObject
@@ -106,9 +107,7 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	included := make([]ast.DDL, 0, len(parsed))
 	for _, stmt := range parsed {
 		if tableName := ddlTableName(stmt); tableName != "" && !shouldIncludeTable(tableName, config) {
-			if table, ok := stmt.(*ast.CreateTable); ok {
-				schema.excludedTableNames[getPathName(table.Name)] = true
-			}
+			schema.excludedTableNames[tableName] = true
 			continue
 		}
 		included = append(included, stmt)

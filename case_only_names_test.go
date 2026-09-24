@@ -87,3 +87,26 @@ func TestCaseOnlyTableInventoryDoesNotHideRealDrops(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"DROP TABLE Users"}, ddls)
 }
+
+func TestCaseOnlyFilteredTableReferencesAreRejected(t *testing.T) {
+	table := "CREATE TABLE Users (Id INT64 NOT NULL, Email STRING(100)) PRIMARY KEY(Id);"
+	for _, tc := range []struct{ name, current, desired string }{
+		{"unique index", "CREATE UNIQUE INDEX UsersByEmail ON Users(Email)", "CREATE UNIQUE INDEX usersbyemail ON users(Email)"},
+		{"constraint", "ALTER TABLE Users ADD CONSTRAINT EmailSet CHECK(Email IS NOT NULL)", "ALTER TABLE users ADD CONSTRAINT emailset CHECK(Email IS NOT NULL)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, config := range []GeneratorConfig{
+				{TargetTables: []string{"Users"}},
+				{SkipTables: []string{"users"}},
+			} {
+				ddls, err := GenerateIdempotentDDLs(table+tc.desired, table+tc.current, config)
+				require.ErrorContains(t, err, "table users differs only in case from existing Users")
+				require.Empty(t, ddls)
+			}
+			// The same statements are still ignored when the entire table is unmanaged.
+			ddls, err := GenerateIdempotentDDLs(table+tc.desired, table+tc.current, GeneratorConfig{TargetTables: []string{"Other"}})
+			require.NoError(t, err)
+			require.Empty(t, ddls)
+		})
+	}
+}
