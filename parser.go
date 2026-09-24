@@ -297,6 +297,16 @@ func formatColumnType(typeNode ast.SchemaType) string {
 // GenerateDDLs generates DDL statements to transform current schema to desired schema
 func GenerateDDLs(current, desired *Schema) []string {
 	var ddls []string
+
+	// 1. Drop indexes first (required before dropping tables with indexes)
+	dropIndexDDLs := generateDropIndexDDLs(current, desired)
+	ddls = append(ddls, dropIndexDDLs...)
+
+	// 2. Drop tables
+	dropTableDDLs := generateDropTableDDLs(current, desired)
+	ddls = append(ddls, dropTableDDLs...)
+
+	// Release conflicting object names before creating namespaces.
 	var schemaNames []string
 	for name := range desired.NamedSchemas {
 		if !current.NamedSchemas[name] {
@@ -307,14 +317,6 @@ func GenerateDDLs(current, desired *Schema) []string {
 	for _, name := range schemaNames {
 		ddls = append(ddls, "CREATE SCHEMA "+name)
 	}
-
-	// 1. Drop indexes first (required before dropping tables with indexes)
-	dropIndexDDLs := generateDropIndexDDLs(current, desired)
-	ddls = append(ddls, dropIndexDDLs...)
-
-	// 2. Drop tables
-	dropTableDDLs := generateDropTableDDLs(current, desired)
-	ddls = append(ddls, dropTableDDLs...)
 
 	// 3. Alter existing tables
 	alterTableDDLs := generateAlterTableDDLs(current, desired)

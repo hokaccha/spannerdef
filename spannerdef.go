@@ -123,9 +123,11 @@ func filterSchema(s *Schema, config GeneratorConfig) *Schema {
 
 // shouldIncludeTable checks if a table should be included based on config
 func shouldIncludeTable(tableName string, config GeneratorConfig) bool {
+	tableName = tableFilterName(tableName)
+
 	// Check skip tables
 	for _, skip := range config.SkipTables {
-		if tableName == skip {
+		if tableName == tableFilterName(skip) {
 			return false
 		}
 	}
@@ -133,7 +135,7 @@ func shouldIncludeTable(tableName string, config GeneratorConfig) bool {
 	// Check target tables (if specified, only include those)
 	if len(config.TargetTables) > 0 {
 		for _, target := range config.TargetTables {
-			if tableName == target {
+			if tableName == tableFilterName(target) {
 				return true
 			}
 		}

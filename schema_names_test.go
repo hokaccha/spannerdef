@@ -66,3 +66,36 @@ func TestFilteredNewTableDoesNotRecreateExistingNamespace(t *testing.T) {
 	require.Len(t, ddls, 1)
 	require.Contains(t, ddls[0], "CREATE TABLE a.NewTable")
 }
+
+func TestQuotedTableNamesRespectFilters(t *testing.T) {
+	for _, tc := range []struct{ sqlName, rawName, schema string }{
+		{"`Order`", "Order", ""},
+		{"s.`Order`", "s.Order", "CREATE SCHEMA s;"},
+		{"`Order`.`Select`", "Order.Select", "CREATE SCHEMA `Order`;"},
+	} {
+		t.Run(tc.rawName, func(t *testing.T) {
+			current := tc.schema + "CREATE TABLE " + tc.sqlName + " (Id INT64 NOT NULL, V STRING(MAX)) PRIMARY KEY(Id); CREATE INDEX IX ON " + tc.sqlName + "(V)"
+			desired := tc.schema + "CREATE TABLE " + tc.sqlName + " (Id INT64 NOT NULL) PRIMARY KEY(Id)"
+			for _, filter := range []string{tc.rawName, tc.sqlName} {
+				for _, target := range []string{desired, tc.schema} {
+					ddls, err := GenerateIdempotentDDLs(target, current, GeneratorConfig{SkipTables: []string{filter}})
+					require.NoError(t, err)
+					require.Empty(t, ddls)
+				}
+				ddls, err := GenerateIdempotentDDLs(desired, current, GeneratorConfig{TargetTables: []string{filter}})
+				require.NoError(t, err)
+				require.Equal(t, []string{"DROP INDEX IX", "ALTER TABLE " + tc.sqlName + " DROP COLUMN V"}, ddls)
+			}
+		})
+	}
+}
+
+func TestNamedSchemaCreationFollowsConflictingDrops(t *testing.T) {
+	current := "CREATE TABLE Accounts (Id INT64 NOT NULL) PRIMARY KEY(Id); CREATE INDEX IX ON Accounts(Id)"
+	desired := "CREATE SCHEMA Accounts; CREATE TABLE Accounts.Users (Id INT64 NOT NULL) PRIMARY KEY(Id)"
+	ddls, err := GenerateIdempotentDDLs(desired, current, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Len(t, ddls, 4)
+	require.Equal(t, []string{"DROP INDEX IX", "DROP TABLE Accounts", "CREATE SCHEMA Accounts"}, ddls[:3])
+	require.Contains(t, ddls[3], "CREATE TABLE Accounts.Users")
+}
