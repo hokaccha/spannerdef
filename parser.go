@@ -65,6 +65,10 @@ type Constraint struct {
 
 // ParseDDLs parses DDL statements and returns a Schema
 func ParseDDLs(ddls string) (*Schema, error) {
+	return parseDDLs(ddls, GeneratorConfig{})
+}
+
+func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	schema := &Schema{
 		NamedSchemas: make(map[string]bool),
 		Tables:       make(map[string]*Table),
@@ -79,6 +83,23 @@ func ParseDDLs(ddls string) (*Schema, error) {
 	parsed, err := memefish.ParseDDLs("", ddls)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse DDLs: %v", err)
+	}
+
+	// Excluded tables and their indexes/ALTERs are outside the managed schema.
+	// Keep validating statements whose scope cannot be tied to a table.
+	included := make([]ast.DDL, 0, len(parsed))
+	for _, stmt := range parsed {
+		if tableName := ddlTableName(stmt); tableName != "" && !shouldIncludeTable(tableName, config) {
+			continue
+		}
+		included = append(included, stmt)
+	}
+	parsed = included
+
+	for _, stmt := range parsed {
+		if err := validateSupportedDDL(stmt); err != nil {
+			return nil, err
+		}
 	}
 
 	// Two passes: create tables/indexes first, then apply alterations.
@@ -101,6 +122,10 @@ func ParseDDLs(ddls string) (*Schema, error) {
 			if err := processCreateIndex(schema, s); err != nil {
 				return nil, fmt.Errorf("failed to process statement: %v", err)
 			}
+		case *ast.AlterTable:
+			// Applied in the second pass after all CREATE TABLE statements.
+		default:
+			return nil, fmt.Errorf("unsupported DDL statement %T: %s", stmt, stmt.SQL())
 		}
 	}
 	for _, stmt := range parsed {
@@ -184,15 +209,13 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	return nil
 }
 
-// processAlterTable processes ALTER TABLE statement. Only the actions that
-// affect the schema model (currently ADD CONSTRAINT) are handled — others
-// are ignored so round-tripping DDL from Spanner/Omni's GetDatabaseDdl does
-// not error out.
+// processAlterTable loads the ADD CONSTRAINT form emitted by GetDatabaseDdl.
+// Other ALTER actions are rejected by validateSupportedDDL.
 func processAlterTable(schema *Schema, stmt *ast.AlterTable) error {
 	tableName := getPathName(stmt.Name)
 	table, ok := schema.Tables[tableName]
 	if !ok {
-		return nil
+		return fmt.Errorf("ALTER TABLE references unknown table %s", tableName)
 	}
 
 	if add, ok := stmt.TableAlteration.(*ast.AddTableConstraint); ok && add.TableConstraint != nil {
