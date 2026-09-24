@@ -35,9 +35,12 @@ func TestOmniGeneratedColumnForwardDependencies(t *testing.T) {
 func TestOmniGeneratedExpressionIdentifiers(t *testing.T) {
 	t.Parallel()
 	db := recreateDatabase(t, getTestConfig(t))
-	current := "CREATE TABLE T (Id INT64 NOT NULL, D DATE, Year INT64 AS (EXTRACT(YEAR FROM D)) STORED, Day INT64 AS (DATE_DIFF(D, DATE '2020-01-01', DAY)) STORED, N INT64 AS (ABS(Id)) STORED) PRIMARY KEY(Id)"
+	current := "CREATE TABLE T (Id INT64 NOT NULL, D DATE, Year INT64 AS (EXTRACT(YEAR FROM D)) STORED, Day INT64 AS (DATE_DIFF(D, DATE '2020-01-01', DAY)) STORED, N INT64 AS (ABS(Id)) STORED, G INT64 AS ((STRUCT<G INT64>(Id)).G) STORED, A ARRAY<INT64> AS ([Id]) STORED) PRIMARY KEY(Id)"
 	require.NotEmpty(t, applySchema(t, db, current, false))
 	desired := strings.Replace(current, "ABS(Id)", "abs((id))", 1)
+	desired = strings.Replace(desired, "EXTRACT(YEAR", "EXTRACT(year", 1)
+	desired = strings.Replace(desired, ", DAY)", ", day)", 1)
+	desired = strings.Replace(desired, "AS ([Id])", "AS (ARRAY[id])", 1)
 	desired = strings.Replace(desired, "Id INT64 NOT NULL,", "Id INT64 NOT NULL, Extra INT64,", 1)
 	require.Equal(t, []string{"ALTER TABLE T ADD COLUMN Extra INT64"}, applySchema(t, db, desired, false))
 	require.Empty(t, applySchema(t, db, desired, false))
