@@ -196,6 +196,9 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 		}
 
 		table.Columns[column.Name] = column
+		if col.PrimaryKey {
+			table.PrimaryKey = append(table.PrimaryKey, col.Name.SQL())
+		}
 		columnNames[strings.ToLower(col.Name.Name)] = column
 	}
 	for _, column := range table.Columns {
@@ -209,12 +212,18 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 
 	// Process primary key
 	for _, key := range stmt.PrimaryKeys {
-		table.PrimaryKey = append(table.PrimaryKey, key.Name.SQL())
+		table.PrimaryKey = append(table.PrimaryKey, canonicalKeySQL(key))
 	}
 
 	// Process table constraints
 	for _, tc := range stmt.TableConstraints {
-		registerTableConstraint(table, tc)
+		if pk, ok := tc.Constraint.(*ast.TablePrimaryKey); ok {
+			for _, key := range pk.Columns {
+				table.PrimaryKey = append(table.PrimaryKey, canonicalKeySQL(key))
+			}
+		} else {
+			registerTableConstraint(table, tc)
+		}
 	}
 
 	// Process interleave information
@@ -321,7 +330,7 @@ func processCreateIndex(schema *Schema, stmt *ast.CreateIndex) error {
 
 	// Process key columns
 	for _, key := range stmt.Keys {
-		index.Columns = append(index.Columns, key.Name.SQL())
+		index.Columns = append(index.Columns, canonicalKeySQL(key))
 	}
 
 	// Process storing columns
@@ -649,11 +658,14 @@ func generateCreateTable(table *Table) string {
 func generateCreateIndex(index *Index) string {
 	var parts []string
 
+	parts = append(parts, "CREATE")
 	if index.Unique {
-		parts = append(parts, "CREATE UNIQUE INDEX")
-	} else {
-		parts = append(parts, "CREATE INDEX")
+		parts = append(parts, "UNIQUE")
 	}
+	if index.NullFiltered {
+		parts = append(parts, "NULL_FILTERED")
+	}
+	parts = append(parts, "INDEX")
 
 	parts = append(parts, index.Name, "ON", index.TableName)
 	parts = append(parts, fmt.Sprintf("(%s)", strings.Join(index.Columns, ", ")))

@@ -96,6 +96,9 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 		}
 	}
 
+	if err := validateKeyChanges(currentSchema, desiredSchema); err != nil {
+		return nil, err
+	}
 	ddls := GenerateDDLs(currentSchema, desiredSchema)
 	return ddls, nil
 }
