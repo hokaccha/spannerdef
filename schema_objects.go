@@ -106,9 +106,11 @@ func normalizeObject(o *SchemaObject) error {
 		case *ast.Storing:
 			sort.Slice(n.Columns, func(i, j int) bool { return n.Columns[i].SQL() < n.Columns[j].SQL() })
 		case *ast.ChangeStreamForTables:
-			sort.Slice(n.Tables, func(i, j int) bool { return n.Tables[i].TableName.SQL() < n.Tables[j].TableName.SQL() })
+			sort.Slice(n.Tables, func(i, j int) bool {
+				return objectKey(n.Tables[i].TableName.SQL()) < objectKey(n.Tables[j].TableName.SQL())
+			})
 			for _, table := range n.Tables {
-				sort.Slice(table.Columns, func(i, j int) bool { return table.Columns[i].SQL() < table.Columns[j].SQL() })
+				sort.Slice(table.Columns, func(i, j int) bool { return objectKey(table.Columns[i].SQL()) < objectKey(table.Columns[j].SQL()) })
 			}
 		}
 		return true

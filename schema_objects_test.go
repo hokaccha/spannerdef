@@ -213,3 +213,16 @@ func TestObjectAlterationsUseExistingNameSpelling(t *testing.T) {
 		require.True(t, strings.HasPrefix(plan[0], tc.prefix), plan)
 	}
 }
+
+func TestStreamColumnNormalizationIsOrderIndependent(t *testing.T) {
+	table := `CREATE TABLE T (Id INT64 NOT NULL, A STRING(MAX), Z STRING(MAX)) PRIMARY KEY(Id);`
+	plan, err := GenerateIdempotentDDLs(table+`CREATE CHANGE STREAM C FOR T(a,Z)`, table+`CREATE CHANGE STREAM C FOR T(A,Z)`, GeneratorConfig{})
+	require.NoError(t, err)
+	require.Empty(t, plan)
+}
+func TestGraphUnknownSourceRequiresExplicitKeys(t *testing.T) {
+	_, err := ParseDDLs(`CREATE VIEW V SQL SECURITY INVOKER AS SELECT 1 AS Id; CREATE PROPERTY GRAPH G NODE TABLES(V PROPERTIES(Id))`)
+	require.ErrorContains(t, err, "explicit KEY")
+	_, err = ParseDDLs(`CREATE VIEW V SQL SECURITY INVOKER AS SELECT 1 AS Id; CREATE PROPERTY GRAPH G NODE TABLES(V KEY(Id) PROPERTIES(Id))`)
+	require.NoError(t, err)
+}

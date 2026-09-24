@@ -69,6 +69,15 @@ func normalizeGraphElement(element *ast.PropertyGraphElement, schema *Schema, no
 	if element.Alias != nil && strings.EqualFold(element.Alias.Name, element.Name.Name) {
 		element.Alias = nil
 	}
+	if table == nil {
+		missingKey := node && element.Keys == nil
+		if edge, ok := element.Keys.(*ast.PropertyGraphEdgeElementKeys); ok && edge.Element == nil {
+			missingKey = true
+		}
+		if missingKey {
+			return fmt.Errorf("graph element %s requires explicit KEY when source table keys are unavailable", element.Name.SQL())
+		}
+	}
 	if table != nil && !table.PrimaryKeyExplicit && len(table.PrimaryKey) == 0 && columnByKey(table, "rowid") == nil {
 		expanded := *table
 		expanded.PrimaryKey = []string{"rowid"}
