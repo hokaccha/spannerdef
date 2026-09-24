@@ -44,7 +44,9 @@ func Run(db Database, options *Options) {
 	}
 
 	if options.DryRun {
-		showDDLs(ddls, options.EnableDrop)
+		if err := showDDLs(ddls, options.EnableDrop); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 
@@ -214,13 +216,18 @@ func ReadFile(filepath string) (string, error) {
 	return string(buf), nil
 }
 
-func showDDLs(ddls []string, enableDropTable bool) {
-	fmt.Println("-- dry run --")
-	for _, ddl := range ddls {
-		if !enableDropTable && strings.Contains(ddl, "DROP TABLE") {
-			fmt.Printf("-- Skipped: %s\n", ddl)
-			continue
-		}
-		fmt.Printf("%s\n", ddl)
+func showDDLs(ddls []string, enableDrop bool) error {
+	plan, err := planDDLs(ddls, enableDrop)
+	if err != nil {
+		return err
 	}
+	fmt.Println("-- dry run --")
+	for _, step := range plan {
+		if step.Skip {
+			fmt.Printf("-- Skipped: %s;\n", step.SQL)
+		} else {
+			fmt.Printf("%s;\n", step.SQL)
+		}
+	}
+	return nil
 }

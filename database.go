@@ -37,21 +37,22 @@ func RunDDLs(d Database, ddls []string, enableDrop bool, quiet bool) error {
 		fmt.Println("-- Apply --")
 	}
 
-	// Filter out destructive DDLs if enableDrop is false
-	validDDLs := make([]string, 0, len(ddls))
-	for _, ddl := range ddls {
-		if !enableDrop && (strings.Contains(ddl, "DROP TABLE") ||
-			strings.Contains(ddl, "DROP INDEX") ||
-			strings.Contains(ddl, "DROP COLUMN")) {
+	plan, err := planDDLs(ddls, enableDrop)
+	if err != nil {
+		return err
+	}
+	validDDLs := make([]string, 0, len(plan))
+	for _, step := range plan {
+		if step.Skip {
 			if !quiet {
-				fmt.Printf("-- Skipped: %s;\n", ddl)
+				fmt.Printf("-- Skipped: %s;\n", step.SQL)
 			}
 			continue
 		}
 		if !quiet {
-			fmt.Printf("%s;\n", ddl)
+			fmt.Printf("%s;\n", step.SQL)
 		}
-		validDDLs = append(validDDLs, ddl)
+		validDDLs = append(validDDLs, step.SQL)
 	}
 
 	if len(validDDLs) == 0 {

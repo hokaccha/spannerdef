@@ -43,14 +43,13 @@ func applySchema(t *testing.T, db *SpannerDatabase, schema string, enableDrop bo
 		return ddls
 	}
 
-	valid := make([]string, 0, len(ddls))
-	for _, ddl := range ddls {
-		if !enableDrop && (strings.Contains(ddl, "DROP TABLE") ||
-			strings.Contains(ddl, "DROP INDEX") ||
-			strings.Contains(ddl, "DROP COLUMN")) {
-			continue
+	plan, err := planDDLs(ddls, enableDrop)
+	require.NoError(t, err)
+	valid := make([]string, 0, len(plan))
+	for _, step := range plan {
+		if !step.Skip {
+			valid = append(valid, step.SQL)
 		}
-		valid = append(valid, ddl)
 	}
 
 	if len(valid) > 0 {
