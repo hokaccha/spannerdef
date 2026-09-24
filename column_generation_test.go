@@ -112,6 +112,7 @@ func TestGeneratedColumnsIgnoreNonReferenceIdentifiers(t *testing.T) {
 		"D DATE, Day INT64 AS (DATE_DIFF(D, DATE '2020-01-01', DAY)) STORED",
 		"D DATE, Month DATE AS (DATE_TRUNC(D, MONTH)) STORED",
 		"J JSON, Foo JSON AS ((J).Foo) STORED",
+		"G INT64 AS ((STRUCT<G INT64>(Id)).G) STORED",
 		"N INT64 AS (WITH(N AS Id + 1, N + 1)) STORED",
 		"N ARRAY<INT64> AS (ARRAY_TRANSFORM([Id], N -> N + 1)) STORED",
 	} {
@@ -154,4 +155,23 @@ func TestEquivalentGeneratedExpressions(t *testing.T) {
 	ddls, err = GenerateIdempotentDDLs(strings.Replace(current, " STORED", "", 1), current, GeneratorConfig{})
 	require.ErrorContains(t, err, "unsupported generation or visibility change")
 	require.Empty(t, ddls)
+}
+
+func TestEquivalentGeneratedDatePartsAndSyntax(t *testing.T) {
+	for _, tc := range []struct{ typ, current, desired string }{
+		{"INT64", "EXTRACT(YEAR FROM D)", "EXTRACT(year FROM d)"},
+		{"INT64", "DATE_DIFF(D, DATE '2020-01-01', DAY)", "date_diff(d, DATE '2020-01-01', day)"},
+		{"DATE", "DATE_TRUNC(D, WEEK(MONDAY))", "date_trunc(d, week(monday))"},
+		{"ARRAY<INT64>", "[Id]", "ARRAY[id]"},
+		{"JSON", "J.Foo", "((j)).Foo"},
+	} {
+		schema := func(expr string) string {
+			return "CREATE TABLE T (Id INT64 NOT NULL, D DATE, J JSON, G " + tc.typ + " AS (" + expr + ") STORED) PRIMARY KEY(Id)"
+		}
+		current := schema(tc.current)
+		desired := strings.Replace(schema(tc.desired), "Id INT64 NOT NULL,", "Id INT64 NOT NULL, Extra INT64,", 1)
+		ddls, err := GenerateIdempotentDDLs(desired, current, GeneratorConfig{})
+		require.NoError(t, err)
+		require.Equal(t, []string{"ALTER TABLE T ADD COLUMN Extra INT64"}, ddls)
+	}
 }
