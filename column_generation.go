@@ -134,7 +134,7 @@ func visitColumnReferences(expr ast.Expr, names map[string]*Column, visit func(*
 			ignored[node.Ident] = true
 		case *ast.ReplaceFieldsArg:
 			ignored[node.Field] = true
-		case ast.Type, *ast.AsAlias, *ast.SequenceArg, *ast.ModelArg, *ast.TableArg:
+		case ast.Type, *ast.StructField, *ast.AsAlias, *ast.SequenceArg, *ast.ModelArg, *ast.TableArg:
 			return false
 		case *ast.WithExpr:
 			scope := make(map[string]*Column, len(names))
@@ -190,7 +190,18 @@ func datePartArgument(call *ast.CallExpr) int {
 func normalizeGenerationExpression(expr ast.Expr, names map[string]*Column) {
 	visitColumnReferences(expr, names, func(ident *ast.Ident) { ident.Name = strings.ToLower(ident.Name) })
 	ast.Inspect(expr, func(node ast.Node) bool {
+		if extract, ok := node.(*ast.ExtractExpr); ok {
+			extract.Part.Name = strings.ToUpper(extract.Part.Name)
+		}
 		if call, ok := node.(*ast.CallExpr); ok {
+			if index := datePartArgument(call); index >= 0 && index < len(call.Args) {
+				ast.Inspect(call.Args[index], func(part ast.Node) bool {
+					if ident, ok := part.(*ast.Ident); ok {
+						ident.Name = strings.ToUpper(ident.Name)
+					}
+					return true
+				})
+			}
 			path := call.Func.Idents
 			if len(path) == 1 || (len(path) == 2 && strings.EqualFold(path[0].Name, "SAFE")) {
 				for _, name := range path {
@@ -209,13 +220,14 @@ func sameGeneration(a, b *Column) bool {
 	if a.generationExpr == nil || b.generationExpr == nil {
 		return false
 	}
-	return equalGenerationAST(reflect.ValueOf(a.generationExpr), reflect.ValueOf(b.generationExpr))
+	return a.generationExpr.Stored.Invalid() == b.generationExpr.Stored.Invalid() &&
+		equalGenerationAST(reflect.ValueOf(a.generationExpr.Expr), reflect.ValueOf(b.generationExpr.Expr))
 }
 
 // Compare expression structure, not serialized SQL: redundant parentheses and
 // source offsets do not change it, while operator grouping and literal/field
-// spelling do. Retain token presence because optional tokens such as STORED
-// carry semantics even though their source offsets do not.
+// spelling do. Expression token positions include optional syntax such as ARRAY
+// and lambda parentheses. Generation mode (STORED) is checked separately.
 func equalGenerationAST(a, b reflect.Value) bool {
 	unwrap := func(v reflect.Value) reflect.Value {
 		for v.IsValid() {
@@ -225,6 +237,16 @@ func equalGenerationAST(a, b reflect.Value) bool {
 			}
 			if paren, ok := v.Interface().(*ast.ParenExpr); ok && paren != nil {
 				v = reflect.ValueOf(paren.Expr)
+				continue
+			}
+			// The parser represents J.Foo as a Path and (J).Foo as a
+			// SelectorExpr. Both describe the same field access.
+			if path, ok := v.Interface().(*ast.Path); ok && path != nil && len(path.Idents) > 0 {
+				var expr ast.Expr = path.Idents[0]
+				for _, ident := range path.Idents[1:] {
+					expr = &ast.SelectorExpr{Expr: expr, Ident: ident}
+				}
+				v = reflect.ValueOf(expr)
 				continue
 			}
 			break
@@ -238,8 +260,8 @@ func equalGenerationAST(a, b reflect.Value) bool {
 	if a.Type() != b.Type() {
 		return false
 	}
-	if pos, ok := a.Interface().(token.Pos); ok {
-		return pos.Invalid() == b.Interface().(token.Pos).Invalid()
+	if _, ok := a.Interface().(token.Pos); ok {
+		return true
 	}
 	switch a.Kind() {
 	case reflect.Pointer, reflect.Interface:
