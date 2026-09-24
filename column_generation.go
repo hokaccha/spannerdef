@@ -3,6 +3,8 @@ package spannerdef
 import (
 	"fmt"
 	"github.com/cloudspannerecosystem/memefish/ast"
+	"github.com/cloudspannerecosystem/memefish/token"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -20,7 +22,7 @@ func validateGenerationChanges(current, desired *Schema) error {
 			if !ok {
 				continue
 			}
-			if old.Generation != col.Generation || old.Hidden != col.Hidden ||
+			if !sameGeneration(old, col) || old.Hidden != col.Hidden ||
 				((old.Generation != "" || col.Generation != "") && (old.Type != col.Type || old.NotNull != col.NotNull || old.Default != col.Default)) {
 				return fmt.Errorf("unsupported generation or visibility change for column %s.%s; apply it explicitly before updating the desired schema", name, colName)
 			}
@@ -97,10 +99,19 @@ func setColumnAdditionOrder(table *Table, expressions map[*Column]ast.Expr, name
 
 func referencedColumns(expr ast.Expr, names map[string]*Column) []*Column {
 	var columns []*Column
+	visitColumnReferences(expr, names, func(ident *ast.Ident) {
+		columns = append(columns, names[strings.ToLower(ident.Name)])
+	})
+	return columns
+}
+
+// Identifiers also occur as field names, function names, aliases and date parts.
+// Only references to declared columns are dependencies.
+func visitColumnReferences(expr ast.Expr, names map[string]*Column, visit func(*ast.Ident)) {
 	ignored := make(map[ast.Node]bool)
-	add := func(name string) {
-		if column := names[strings.ToLower(name)]; column != nil {
-			columns = append(columns, column)
+	add := func(ident *ast.Ident) {
+		if names[strings.ToLower(ident.Name)] != nil {
+			visit(ident)
 		}
 	}
 	ast.Inspect(expr, func(node ast.Node) bool {
@@ -109,16 +120,151 @@ func referencedColumns(expr ast.Expr, names map[string]*Column) []*Column {
 		}
 		switch node := node.(type) {
 		case *ast.CallExpr:
-			ignored[node.Func] = true // Function names are not column references.
+			ignored[node.Func] = true
+			if index := datePartArgument(node); index >= 0 && index < len(node.Args) {
+				ignored[node.Args[index]] = true
+			}
 		case *ast.NamedArg:
 			ignored[node.Name] = true
+		case *ast.BracedConstructorField:
+			ignored[node.Name] = true
+		case *ast.ExtractExpr:
+			ignored[node.Part] = true
+		case *ast.SelectorExpr:
+			ignored[node.Ident] = true
+		case *ast.ReplaceFieldsArg:
+			ignored[node.Field] = true
+		case ast.Type, *ast.AsAlias, *ast.SequenceArg, *ast.ModelArg, *ast.TableArg:
+			return false
+		case *ast.WithExpr:
+			scope := make(map[string]*Column, len(names))
+			for name, column := range names {
+				scope[name] = column
+			}
+			for _, binding := range node.Vars {
+				visitColumnReferences(binding.Expr, scope, visit)
+				delete(scope, strings.ToLower(binding.Name.Name))
+			}
+			visitColumnReferences(node.Expr, scope, visit)
+			return false
+		case *ast.LambdaArg:
+			scope := make(map[string]*Column, len(names))
+			for name, column := range names {
+				scope[name] = column
+			}
+			for _, arg := range node.Args {
+				delete(scope, strings.ToLower(arg.Name))
+			}
+			visitColumnReferences(node.Expr, scope, visit)
+			return false
 		case *ast.Path:
-			add(node.Idents[0].Name) // A field access depends on its root column.
+			add(node.Idents[0])
 			return false
 		case *ast.Ident:
-			add(node.Name)
+			add(node)
 		}
 		return true
 	})
-	return columns
+}
+
+// The parser models these grammar arguments as ordinary expressions, but they
+// denote units (including WEEK(MONDAY)), never column references.
+func datePartArgument(call *ast.CallExpr) int {
+	path := call.Func.Idents
+	if len(path) == 2 && strings.EqualFold(path[0].Name, "SAFE") {
+		path = path[1:]
+	}
+	if len(path) != 1 {
+		return -1
+	}
+	switch strings.ToUpper(path[0].Name) {
+	case "DATE_DIFF", "DATETIME_DIFF", "TIMESTAMP_DIFF", "TIME_DIFF":
+		return 2
+	case "DATE_TRUNC", "DATETIME_TRUNC", "TIMESTAMP_TRUNC", "TIME_TRUNC", "LAST_DAY":
+		return 1
+	default:
+		return -1
+	}
+}
+
+func normalizeGenerationExpression(expr ast.Expr, names map[string]*Column) {
+	visitColumnReferences(expr, names, func(ident *ast.Ident) { ident.Name = strings.ToLower(ident.Name) })
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok {
+			path := call.Func.Idents
+			if len(path) == 1 || (len(path) == 2 && strings.EqualFold(path[0].Name, "SAFE")) {
+				for _, name := range path {
+					name.Name = strings.ToUpper(name.Name)
+				}
+			}
+		}
+		return true
+	})
+}
+
+func sameGeneration(a, b *Column) bool {
+	if a.Generation == b.Generation {
+		return true
+	}
+	if a.generationExpr == nil || b.generationExpr == nil {
+		return false
+	}
+	return equalGenerationAST(reflect.ValueOf(a.generationExpr), reflect.ValueOf(b.generationExpr))
+}
+
+// Compare expression structure, not serialized SQL: redundant parentheses and
+// source offsets do not change it, while operator grouping and literal/field
+// spelling do. Retain token presence because optional tokens such as STORED
+// carry semantics even though their source offsets do not.
+func equalGenerationAST(a, b reflect.Value) bool {
+	unwrap := func(v reflect.Value) reflect.Value {
+		for v.IsValid() {
+			if v.Kind() == reflect.Interface && !v.IsNil() {
+				v = v.Elem()
+				continue
+			}
+			if paren, ok := v.Interface().(*ast.ParenExpr); ok && paren != nil {
+				v = reflect.ValueOf(paren.Expr)
+				continue
+			}
+			break
+		}
+		return v
+	}
+	a, b = unwrap(a), unwrap(b)
+	if !a.IsValid() || !b.IsValid() {
+		return a.IsValid() == b.IsValid()
+	}
+	if a.Type() != b.Type() {
+		return false
+	}
+	if pos, ok := a.Interface().(token.Pos); ok {
+		return pos.Invalid() == b.Interface().(token.Pos).Invalid()
+	}
+	switch a.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if a.IsNil() || b.IsNil() {
+			return a.IsNil() == b.IsNil()
+		}
+		return equalGenerationAST(a.Elem(), b.Elem())
+	case reflect.Struct:
+		for i := 0; i < a.NumField(); i++ {
+			if !equalGenerationAST(a.Field(i), b.Field(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice:
+		if a.Len() != b.Len() {
+			return false
+		}
+		for i := 0; i < a.Len(); i++ {
+			if !equalGenerationAST(a.Index(i), b.Index(i)) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(a.Interface(), b.Interface())
+	}
 }
