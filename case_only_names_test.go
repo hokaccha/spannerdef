@@ -1,8 +1,9 @@
 package spannerdef
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCaseOnlyNameChangesAreRejected(t *testing.T) {
@@ -18,6 +19,14 @@ func TestCaseOnlyNameChangesAreRejected(t *testing.T) {
 			ddls, err := GenerateIdempotentDDLs(tc.desired, current, GeneratorConfig{})
 			require.ErrorContains(t, err, tc.message)
 			require.Empty(t, ddls)
+
+			currentSchema, err := ParseDDLs(current)
+			require.NoError(t, err)
+			desiredSchema, err := ParseDDLs(tc.desired)
+			require.NoError(t, err)
+			ddls, err = GenerateDDLsChecked(currentSchema, desiredSchema)
+			require.ErrorContains(t, err, tc.message)
+			require.Empty(t, ddls)
 		})
 	}
 }
@@ -30,4 +39,51 @@ func TestExactNamesAreNotReportedAsCaseOnlyChanges(t *testing.T) {
 	ddls, err = GenerateIdempotentDDLs("CREATE TABLE Accounts (Id STRING(36) NOT NULL) PRIMARY KEY (Id)", current, GeneratorConfig{})
 	require.NoError(t, err)
 	require.Contains(t, ddls, "DROP TABLE Users")
+}
+
+func TestCaseOnlyTableChangesWithFilters(t *testing.T) {
+	for _, names := range [][2]string{{"Users", "users"}, {"s.Users", "s.users"}} {
+		t.Run(names[0]+"/"+names[1], func(t *testing.T) {
+			current := "CREATE SCHEMA s; CREATE TABLE " + names[0] + " (Id INT64 NOT NULL) PRIMARY KEY(Id)"
+			desired := "CREATE SCHEMA s; CREATE TABLE " + names[1] + " (Id INT64 NOT NULL) PRIMARY KEY(Id)"
+			for _, tc := range []struct {
+				name   string
+				config GeneratorConfig
+			}{
+				{"target current", GeneratorConfig{TargetTables: []string{names[0]}}},
+				{"target desired", GeneratorConfig{TargetTables: []string{names[1]}}},
+				{"skip current", GeneratorConfig{SkipTables: []string{names[0]}}},
+				{"skip desired", GeneratorConfig{SkipTables: []string{names[1]}}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					ddls, err := GenerateIdempotentDDLs(desired, current, tc.config)
+					require.ErrorContains(t, err, "differs only in case")
+					require.Empty(t, ddls)
+				})
+			}
+		})
+	}
+}
+
+func TestCaseOnlyChangesOutsideManagedTablesAreIgnored(t *testing.T) {
+	// Unsupported features on excluded tables must remain outside validation.
+	current := "CREATE TABLE Users (Id INT64 NOT NULL) PRIMARY KEY(Id); CREATE TABLE Keep (Id INT64 NOT NULL) PRIMARY KEY(Id)"
+	desired := "CREATE TABLE users (Id INT64 NOT NULL) PRIMARY KEY(Id), OPTIONS (columnar_policy = 'enabled'); CREATE TABLE Keep (Id INT64 NOT NULL) PRIMARY KEY(Id)"
+	_, err := ParseDDLs(desired)
+	require.ErrorContains(t, err, "unsupported table OPTIONS")
+	for _, config := range []GeneratorConfig{
+		{TargetTables: []string{"Keep"}},
+		{SkipTables: []string{"Users", "users"}},
+	} {
+		ddls, err := GenerateIdempotentDDLs(desired, current, config)
+		require.NoError(t, err)
+		require.Empty(t, ddls)
+	}
+}
+
+func TestCaseOnlyTableInventoryDoesNotHideRealDrops(t *testing.T) {
+	current := "CREATE TABLE Users (Id INT64 NOT NULL) PRIMARY KEY(Id)"
+	ddls, err := GenerateIdempotentDDLs("", current, GeneratorConfig{TargetTables: []string{"Users"}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"DROP TABLE Users"}, ddls)
 }

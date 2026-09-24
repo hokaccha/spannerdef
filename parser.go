@@ -13,6 +13,10 @@ import (
 
 // Schema represents a database schema
 type Schema struct {
+	// Retain excluded table identities so filtering cannot hide a case-only
+	// rename of a managed table. Their definitions remain outside validation.
+	excludedTableNames map[string]bool
+
 	Objects      map[string]*SchemaObject
 	NamedSchemas map[string]bool
 	Tables       map[string]*Table
@@ -80,10 +84,11 @@ func ParseDDLs(ddls string) (*Schema, error) {
 
 func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	schema := &Schema{
-		Objects:      make(map[string]*SchemaObject),
-		NamedSchemas: make(map[string]bool),
-		Tables:       make(map[string]*Table),
-		Indexes:      make(map[string]*Index),
+		excludedTableNames: make(map[string]bool),
+		Objects:            make(map[string]*SchemaObject),
+		NamedSchemas:       make(map[string]bool),
+		Tables:             make(map[string]*Table),
+		Indexes:            make(map[string]*Index),
 	}
 
 	if strings.TrimSpace(ddls) == "" {
@@ -101,6 +106,9 @@ func parseDDLs(ddls string, config GeneratorConfig) (*Schema, error) {
 	included := make([]ast.DDL, 0, len(parsed))
 	for _, stmt := range parsed {
 		if tableName := ddlTableName(stmt); tableName != "" && !shouldIncludeTable(tableName, config) {
+			if table, ok := stmt.(*ast.CreateTable); ok {
+				schema.excludedTableNames[getPathName(table.Name)] = true
+			}
 			continue
 		}
 		included = append(included, stmt)

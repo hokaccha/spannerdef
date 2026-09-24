@@ -113,10 +113,11 @@ func GenerateIdempotentDDLs(desiredDDLs, currentDDLs string, config GeneratorCon
 // filterSchema applies target/skip table filters
 func filterSchema(s *Schema, config GeneratorConfig) *Schema {
 	filtered := &Schema{
-		Objects:      make(map[string]*SchemaObject),
-		NamedSchemas: make(map[string]bool),
-		Tables:       make(map[string]*Table),
-		Indexes:      make(map[string]*Index),
+		excludedTableNames: s.excludedTableNames,
+		Objects:            make(map[string]*SchemaObject),
+		NamedSchemas:       make(map[string]bool),
+		Tables:             make(map[string]*Table),
+		Indexes:            make(map[string]*Index),
 	}
 
 	// Non-table objects are managed globally; table filters apply to indexes
