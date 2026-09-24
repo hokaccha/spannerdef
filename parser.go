@@ -24,6 +24,7 @@ type Table struct {
 	Name                    string
 	Columns                 map[string]*Column
 	PrimaryKey              []string
+	InterleaveNotEnforced   bool
 	ParentTable             string                 // empty if not interleaved
 	OnDelete                string                 // "ON DELETE CASCADE", "ON DELETE NO ACTION", or empty
 	Constraints             map[string]*Constraint // Named constraints (CHECK, etc.)
@@ -218,6 +219,7 @@ func processCreateTable(schema *Schema, stmt *ast.CreateTable) error {
 	// Process interleave information
 	if stmt.Cluster != nil {
 		cluster := stmt.Cluster
+		table.InterleaveNotEnforced = !cluster.Enforced
 		if cluster.TableName != nil && len(cluster.TableName.Idents) > 0 {
 			table.ParentTable = getPathName(cluster.TableName)
 		}
@@ -618,7 +620,11 @@ func generateCreateTable(table *Table) string {
 	// Add interleave clause if present
 	if table.ParentTable != "" {
 		ddl.WriteString(",\n")
-		fmt.Fprintf(&ddl, "INTERLEAVE IN PARENT %s", table.ParentTable)
+		ddl.WriteString("INTERLEAVE IN ")
+		if !table.InterleaveNotEnforced {
+			ddl.WriteString("PARENT ")
+		}
+		ddl.WriteString(table.ParentTable)
 		if table.OnDelete != "" {
 			fmt.Fprintf(&ddl, " %s", table.OnDelete)
 		}
