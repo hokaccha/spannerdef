@@ -32,8 +32,8 @@ jobs:
           --name spanneromni \
           -p 15000:15000 \
           -v spanner:/spanner \
-          us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r2.1-beta \
-          start-single-server
+          us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r4-lts \
+          start-single-server --listen-addresses=0.0.0.0
 
     - name: Wait for Spanner Omni to be ready
       run: |
@@ -53,6 +53,7 @@ jobs:
 
     - name: Run tests
       env:
+        SPANNER_TEST_QUEUES: "1"
         SPANNER_REQUIRE_BACKEND: "1"
         SPANNER_EMULATOR_HOST: localhost:15000
         SPANNER_PROJECT_ID: default

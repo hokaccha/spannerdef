@@ -36,6 +36,9 @@ func planDDLs(ddls []string, enableDrop bool) ([]plannedDDL, error) {
 		skip := false
 		if !enableDrop {
 			switch n := node.(type) {
+			case *ast.DropQueue:
+				skip = true
+				skippedNames[strings.ToLower(n.Name.SQL())] = true
 			case *ast.DropView:
 				skip = true
 				skippedNames[strings.ToLower(n.Name.SQL())] = true
@@ -88,7 +91,7 @@ func planDDLs(ddls []string, enableDrop bool) ([]plannedDDL, error) {
 		}
 		if hasSkippedDrop {
 			switch node.(type) {
-			case *ast.AlterSequence, *ast.AlterChangeStream:
+			case *ast.AlterSequence, *ast.AlterChangeStream, *ast.AlterQueue:
 				return nil, fmt.Errorf("altering schema objects may require skipped drops; use --enable-drop")
 			}
 		}

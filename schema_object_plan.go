@@ -23,6 +23,14 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 	if err := validateObjectNames(current, desired); err != nil {
 		return nil, err
 	}
+	for _, schema := range []*Schema{current, desired} {
+		objects := objectsByKey(schema.Objects)
+		for _, table := range schema.Tables {
+			if parent := objects[objectKey(table.ParentTable)]; parent != nil && parent.Kind == "QUEUE" {
+				return nil, fmt.Errorf("table %s interleaved in queue %s is not supported; manage it separately", table.Name, parent.Name)
+			}
+		}
+	}
 	oldOrder, err := orderedObjects(current.Objects)
 	if err != nil {
 		return nil, err
@@ -70,6 +78,9 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 		}
 		for ref := range objectReferences(o.definition) {
 			if affected[ref] && o.Kind != "CHANGE STREAM" {
+				if o.Kind == "QUEUE" {
+					return nil, fmt.Errorf("queue %s depends on structurally changed object %s; migrate the dependency explicitly before updating the desired schema", o.Name, ref)
+				}
 				rebuild[objectKey(o.Name)] = true
 			}
 		}
@@ -103,6 +114,17 @@ func generateObjectDDLs(current, desired *Schema) ([]string, error) {
 			continue
 		}
 		switch n := o.definition.(type) {
+		case *ast.CreateQueue:
+			prev := old.definition.(*ast.CreateQueue)
+			if err := validateQueueEnforcement(prev, n, current); err != nil {
+				return nil, err
+			}
+			early, late, err := alterQueue(prev, n)
+			if err != nil {
+				return nil, err
+			}
+			before = append(before, early...)
+			after = append(after, late...)
 		case *ast.CreateSequence:
 			oldSeq := old.definition.(*ast.CreateSequence)
 			delta := changedOptions(oldSeq.Options, n.Options, true)
@@ -315,7 +337,7 @@ func validateObjectNames(current, desired *Schema) error {
 	return nil
 }
 func isObjectKind(kind string) bool {
-	return strings.Contains("|SEQUENCE|VIEW|SEARCH INDEX|VECTOR INDEX|CHANGE STREAM|PROPERTY GRAPH|", "|"+kind+"|")
+	return strings.Contains("|SEQUENCE|VIEW|SEARCH INDEX|VECTOR INDEX|CHANGE STREAM|PROPERTY GRAPH|QUEUE|", "|"+kind+"|")
 }
 func sortedObjectNames(objects map[string]*SchemaObject) []string {
 	names := make([]string, 0, len(objects))

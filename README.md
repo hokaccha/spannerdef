@@ -16,7 +16,7 @@ Idempotent Google Cloud Spanner schema management by SQL, inspired by [sqldef](h
 - **Columns**: add/drop columns, change supported types, defaults, nullability, and options; preserve generated, identity, hidden, and ON UPDATE definitions
 - **Indexes**: create/drop regular, unique, null-filtered, and expression indexes; preserve key directions and STORING columns
 - **Constraints**: add/drop/recreate CHECK and foreign key constraints, including enforcement and ON DELETE actions
-- **Schema objects**: sequences, views, search/vector indexes, change streams, property graphs (see [support boundaries](#additional-googlesql-schema-objects))
+- **Schema objects**: sequences, views, search/vector indexes, change streams, property graphs, queues (see [support boundaries](#additional-googlesql-schema-objects))
 - **TTL**: add/replace/drop row deletion policies, including zero-day policies
 
 Desired schema files use CREATE declarations (and ALTER TABLE ADD CONSTRAINT as emitted by Spanner exports). They are schema descriptions, not a sequential migration script. Unsupported statements and definition changes return errors before execution.
@@ -179,17 +179,20 @@ spannerdef uses Google Cloud authentication. Make sure you have:
 
 ## Additional GoogleSQL schema objects
 
-Desired schema files can declare `CREATE SEQUENCE`, `CREATE VIEW`, `CREATE SEARCH INDEX`, `CREATE VECTOR INDEX`, `CREATE CHANGE STREAM`, and `CREATE PROPERTY GRAPH`. Definitions retain their parsed clauses and are compared after normalization. Creation and removal follow dependencies, including sequence defaults, views over views, graph sources and search index base tables.
+Desired schema files can declare `CREATE SEQUENCE`, `CREATE VIEW`, `CREATE SEARCH INDEX`, `CREATE VECTOR INDEX`, `CREATE CHANGE STREAM`, `CREATE PROPERTY GRAPH`, and `CREATE QUEUE`. Definitions retain their parsed clauses and are compared after normalization. Creation and removal follow dependencies, including sequence defaults, views over views, graph sources and search index base tables.
 
 - Sequences use `OPTIONS` syntax. Changed options use `ALTER SEQUENCE`; omitting an initial `start_with_counter` does not reset a running sequence. Removing skip-range options resets them with `NULL`.
 - View and graph changes use `CREATE OR REPLACE`. Search/vector index changes rebuild the index. Structural column changes also rebuild dependent views, graphs and search/vector indexes, including indirect view dependencies. Rebuilds require `--enable-drop`.
 - Change streams use `ALTER ... SET FOR`, `DROP FOR ALL`, and `SET OPTIONS`, retaining existing history. If changing an explicit tracking list both requires new columns and releases a table or explicitly tracked column being dropped, split the migration into separate steps. The planner does not silently suspend capture. `FOR ALL` continues to follow schema changes automatically.
-- All six object kinds obey `--enable-drop`. Mixed plans that require skipped removals fail before execution. Dropping a change stream deletes its history; dropping a sequence discards its state.
-- `target_tables` and `skip_tables` also filter search/vector indexes by their base table. Sequences, views, change streams and graphs are managed globally and must remain in the desired schema if they should be retained. Graph shorthand keys and properties require the source table in the managed schema; use explicit keys and properties for views or excluded tables.
+- Queues preserve columns, keys, generated expressions, interleave clauses and TTL. Options and TTL changes use `ALTER QUEUE`; changing interleave enforcement on the same parent and ON DELETE actions is supported. Enabling enforcement under a parent with TTL requires removing that TTL in a separate migration. Columns, keys, and parent changes are rejected rather than dropping messages. Parent structural changes with retained queues must be migrated explicitly; tables interleaved in queues are not yet supported. Spanner does not allow queues in named schemas.
+- All seven object kinds obey `--enable-drop`. Mixed plans that require skipped removals fail before execution. Dropping a change stream deletes its history; dropping a sequence discards its state; dropping a queue deletes its messages.
+- `target_tables` and `skip_tables` also filter search/vector indexes by their base table. Sequences, views, change streams, graphs and queues are managed globally and must remain in the desired schema if they should be retained. Graph shorthand keys and properties require the source table in the managed schema; use explicit keys and properties for views or excluded tables.
 
-Support is limited to GoogleSQL syntax understood by the pinned memefish parser. In particular, sequence declarations require an `OPTIONS` clause, and qualified names for vector indexes, change streams and graph elements, and newer graph semantic options are not yet accepted by that parser. Other object kinds (queues, models, functions, proto bundles, locality groups and roles/grants) remain unsupported and produce errors. Cross-kind renames/replacements require separate migrations. Use `GenerateDDLsChecked` or `GenerateIdempotentDDLs` when embedding the generator so dependency errors are returned to the caller.
+Support is limited to GoogleSQL syntax understood by the pinned memefish parser. In particular, sequence declarations require an `OPTIONS` clause, and qualified names for vector indexes, change streams and graph elements, and newer graph semantic options are not yet accepted by that parser. Other object kinds (models, functions, proto bundles, locality groups and roles/grants) remain unsupported and produce errors. Cross-kind renames/replacements require separate migrations. Use `GenerateDDLsChecked` or `GenerateIdempotentDDLs` when embedding the generator so dependency errors are returned to the caller.
 
-The integration suite checks object creation, changes, deletion and export round trips against Omni and Emulator. Emulator 1.5.58 exports graph property names without their derived expressions and omits `NO PROPERTIES` and dynamic label/property clauses; the complex graph round-trip case runs on Omni, which preserves those definitions. This emulator limitation is not treated as expression equivalence by the generator.
+Queue planning is covered by unit tests. CI and `make test` enable the Queue integration tests (`SPANNER_TEST_QUEUES=1`) on Omni 2026.r4-lts, covering creation, options, TTL, interleave transitions, deletion and export round trips. The Emulator job leaves these tests disabled because its pinned version does not support queues. See the [Queue DDL reference](https://docs.cloud.google.com/spanner/docs/reference/standard-sql/data-definition-language#queue_statements).
+
+The integration suite checks the other object kinds for creation, changes, deletion and export round trips against Omni and Emulator. Emulator 1.5.58 exports graph property names without their derived expressions and omits `NO PROPERTIES` and dynamic label/property clauses; the complex graph round-trip case runs on Omni, which preserves those definitions. This emulator limitation is not treated as expression equivalence by the generator.
 
 ## Using wrench alongside spannerdef
 
@@ -225,16 +228,16 @@ spannerdef --project=my-project --instance=my-instance --database=my-db < schema
 
 Any project/instance/database IDs are accepted; you typically create them via `gcloud spanner instances create ...` first.
 
-### Spanner Omni (pre-GA)
+### Spanner Omni
 
 Spanner Omni runs the actual Spanner binary locally. In single-server mode it exposes a gRPC endpoint on port `15000` with `project=default` and `instance=default` hardcoded.
 
 ```bash
 docker run -d -p 15000:15000 \
   --name spanneromni \
-  -v spanneromni-2026-r2-1-beta:/spanner \
-  us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r2.1-beta \
-  start-single-server
+  -v spanneromni-2026-r4-lts:/spanner \
+  us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r4-lts \
+  start-single-server --listen-addresses=0.0.0.0
 
 # Create a database first
 docker exec spanneromni /google/spanner/bin/spanner databases create my-db
@@ -243,9 +246,9 @@ export SPANNER_EMULATOR_HOST=localhost:15000
 spannerdef --project=default --instance=default --database=my-db < schema.sql
 ```
 
-Omni r2.1 does not support in-place upgrades of older deployments. These examples use a new version-specific volume; keep older volumes until any needed data has been exported and migrated.
+These examples use a new version-specific volume. Keep older volumes until any needed data has been exported and migrated; consult the [Omni release notes](https://docs.cloud.google.com/spanner-omni/release-notes) before upgrading an existing deployment.
 
-Note: Spanner Omni is pre-GA and licensed for development, testing, prototyping, and demonstration only.
+Omni 2026.r4-lts is generally available. These instructions use the single-server setup for local development and testing.
 
 ## Development
 
@@ -257,7 +260,7 @@ go build ./cmd/spannerdef
 
 ### Testing
 
-spannerdef's integration tests run against [Spanner Omni](https://cloud.google.com/spanner-omni/docs) — the offline single-server distribution of Spanner. The full suite runs on Omni 2026.r2.1-beta. A separate CI job runs schema regressions on Emulator 1.5.58 to catch differences in recently introduced DDL features. Neither local runtime replaces validation against your managed Spanner configuration.
+spannerdef's integration tests run against [Spanner Omni](https://cloud.google.com/spanner-omni/docs) — the offline single-server distribution of Spanner. The full suite runs on Omni 2026.r4-lts. A separate CI job runs schema regressions on Emulator 1.5.58 to catch differences in recently introduced DDL features. Neither local runtime replaces validation against your managed Spanner configuration.
 
 **Requirements**: Docker.
 
@@ -284,7 +287,7 @@ Because spannerdef distinguishes tables/indexes by name, it does NOT support:
 - Complex schema changes that require data migration
 - Existing primary key/ordinary index definition changes or generated/identity/ON UPDATE definition changes
 - Changing only the case of an existing schema, table, column, index, or constraint name (Spanner rejects names that differ only in case, so these return explicit errors)
-- Database/table options and unmodeled schema objects such as queues, models, functions, proto bundles, locality groups, and roles/grants (these return explicit errors). See [supported schema objects and their limits](#additional-googlesql-schema-objects).
+- Database/table options and unmodeled schema objects such as models, functions, proto bundles, locality groups, and roles/grants (these return explicit errors). See [supported schema objects and their limits](#additional-googlesql-schema-objects).
 
 To handle these cases, you would need to apply changes manually and use `--export` to capture the new schema.
 

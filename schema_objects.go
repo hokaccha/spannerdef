@@ -24,6 +24,9 @@ type SchemaObject struct {
 func schemaObject(stmt ast.DDL) *SchemaObject {
 	o := &SchemaObject{definition: stmt}
 	switch s := stmt.(type) {
+	case *ast.CreateQueue:
+		o.Kind, o.Name, o.SchemaName = "QUEUE", s.Name.SQL(), pathSchemaName(s.Name)
+		s.IfNotExists = false
 	case *ast.CreateSequence:
 		o.Kind, o.Name, o.SchemaName = "SEQUENCE", s.Name.SQL(), pathSchemaName(s.Name)
 		s.IfNotExists = false
@@ -80,6 +83,9 @@ func normalizeObject(o *SchemaObject) error {
 		}
 		s.Params = nil
 		s.Options = makeOptions(values)
+	}
+	if q, ok := o.definition.(*ast.CreateQueue); ok {
+		normalizeQueue(q)
 	}
 	// Preserve literal case/content. Normalize option ordering and unordered
 	// membership lists without rewriting expressions or ordered keys.
@@ -165,6 +171,8 @@ func sameObject(a, b *SchemaObject) bool {
 		}
 		ast.Inspect(node, func(n ast.Node) bool {
 			switch value := n.(type) {
+			case *ast.CreateQueue:
+				lowerPath(value.Name)
 			case *ast.CreateSequence:
 				lowerPath(value.Name)
 			case *ast.CreateView:
@@ -257,6 +265,10 @@ func objectReferences(node ast.Node) map[string]bool {
 				refs[objectKey(n.PropertyGraphName.SQL())] = true
 			case *ast.PropertyGraphElement:
 				refs[objectKey(n.Name.SQL())] = true
+			case *ast.CreateQueue:
+				if n.Cluster != nil {
+					refs[objectKey(n.Cluster.TableName.SQL())] = true
+				}
 			case *ast.CreateSearchIndex:
 				refs[objectKey(n.TableName.SQL())] = true
 				if n.Interleave != nil {

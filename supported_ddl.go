@@ -9,6 +9,10 @@ import (
 // Reject unsupported objects before building a partial migration plan.
 func validateSupportedDDL(stmt ast.DDL) error {
 	switch s := stmt.(type) {
+	case *ast.CreateQueue:
+		if len(s.Name.Idents) != 1 {
+			return fmt.Errorf("queue %s cannot be created in a named schema", s.Name.SQL())
+		}
 	case *ast.CreateTable:
 		if s.Options != nil {
 			return fmt.Errorf("unsupported table OPTIONS on %s", s.Name.SQL())

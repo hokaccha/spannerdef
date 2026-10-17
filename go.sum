@@ -16,8 +16,8 @@ github.com/MakeNowJust/heredoc/v2 v2.0.1 h1:rlCHh70XXXv7toz95ajQWOWQnN4WNLt0TdpZ
 github.com/MakeNowJust/heredoc/v2 v2.0.1/go.mod h1:6/2Abh5s+hc3g9nbWLe9ObDIOhaRrqsyY9MWy+4JdRM=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/cloudspannerecosystem/memefish v0.8.2-0.20260912110420-1691dd67c4c7 h1:aji6AzutWQJSdJ5KjNPf7l+5fwsNF3dvtRvoXQecv/o=
-github.com/cloudspannerecosystem/memefish v0.8.2-0.20260912110420-1691dd67c4c7/go.mod h1:v7Inh4V9KpoWLIgpCFTfyVKcJbL82fSOI0Uf8P8H4bQ=
+github.com/cloudspannerecosystem/memefish v0.8.2-0.20260927033833-16b17ddb4ed7 h1:iEQpxjLs6A9yjJYSW1Hjs3c6DQ3CHbH0I+ovrsZ6VUo=
+github.com/cloudspannerecosystem/memefish v0.8.2-0.20260927033833-16b17ddb4ed7/go.mod h1:v7Inh4V9KpoWLIgpCFTfyVKcJbL82fSOI0Uf8P8H4bQ=
 github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 h1:aBangftG7EVZoUb69Os8IaYg++6uMOdKK83QtkkvJik=
 github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2/go.mod h1:qwXFYgsP6T7XnJtbKlf1HP8AjxZZyzxMmc+Lq5GjlU4=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
