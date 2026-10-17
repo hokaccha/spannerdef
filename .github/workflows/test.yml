@@ -75,8 +75,8 @@ jobs:
         go-version-file: go.mod
     - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
       with:
-        # Pinned so the lint gate only changes when this line does.
-        version: v2.13.2
+        # v2.14+ can read the export data emitted by Go 1.27.2.
+        version: v2.14.0
 
   vulncheck:
     name: govulncheck
