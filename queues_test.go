@@ -13,7 +13,7 @@ const testQueue = `CREATE QUEUE Q (Id INT64 NOT NULL, Payload JSON NOT NULL) PRI
 func TestQueueLifecycle(t *testing.T) {
 	for _, ddl := range []string{
 		testQueue,
-		`CREATE SCHEMA S; CREATE QUEUE IF NOT EXISTS S.Q (Id INT64 NOT NULL, Payload BYTES(MAX) NOT NULL HIDDEN) PRIMARY KEY (Id DESC), OPTIONS (disable_send=true)`,
+		`CREATE QUEUE IF NOT EXISTS Q (Id INT64 NOT NULL, Payload BYTES(MAX) NOT NULL HIDDEN) PRIMARY KEY (Id DESC), OPTIONS (disable_send=true)`,
 		`CREATE QUEUE Q (Id TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true), Payload STRING(MAX) NOT NULL) PRIMARY KEY(Id), ROW DELETION POLICY (OLDER_THAN(Id, INTERVAL 0 DAY))`,
 		`CREATE QUEUE Q (Id INT64 NOT NULL AS (CAST(JSON_VALUE(Payload, '$.id') AS INT64)) STORED, Payload JSON NOT NULL) PRIMARY KEY(Id)`,
 	} {
@@ -28,12 +28,7 @@ func TestQueueLifecycle(t *testing.T) {
 			diff, err := GenerateIdempotentDDLs(ddl, strings.Join(create, ";"), GeneratorConfig{})
 			require.NoError(t, err)
 			require.Empty(t, diff)
-			// Keep named schemas, whose removal is intentionally unsupported.
-			desired := ""
-			if strings.HasPrefix(ddl, "CREATE SCHEMA") {
-				desired = "CREATE SCHEMA S"
-			}
-			drops, err := GenerateIdempotentDDLs(desired, ddl, GeneratorConfig{})
+			drops, err := GenerateIdempotentDDLs("", ddl, GeneratorConfig{})
 			require.NoError(t, err)
 			require.Len(t, drops, 1)
 			require.True(t, strings.HasPrefix(drops[0], "DROP QUEUE "))
@@ -204,4 +199,9 @@ func TestQueueEnforcementChecksAncestorTTL(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, ddls, 2)
 	}
+}
+
+func TestQueueNamedSchemaRejected(t *testing.T) {
+	_, err := GenerateIdempotentDDLs(`CREATE SCHEMA S; CREATE QUEUE S.Q (Id INT64 NOT NULL, Payload JSON NOT NULL) PRIMARY KEY(Id)`, "", GeneratorConfig{})
+	require.ErrorContains(t, err, "cannot be created in a named schema")
 }

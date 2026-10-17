@@ -4,9 +4,9 @@
 OMNI_HOST      ?= localhost:15000
 OMNI_PROJECT   ?= default
 OMNI_INSTANCE  ?= default
-OMNI_IMAGE     ?= us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r2.1-beta
+OMNI_IMAGE     ?= us-docker.pkg.dev/spanner-omni/images/spanner-omni:2026.r4-lts
 OMNI_CONTAINER ?= spanneromni
-OMNI_VOLUME    ?= spanneromni-2026-r2-1-beta
+OMNI_VOLUME    ?= spanneromni-2026-r4-lts
 
 # -parallel 80 empirically minimises wall time against Omni single-server
 # on an 8-core laptop (~80s vs ~150s at -parallel 10). Going higher starts
@@ -20,14 +20,14 @@ build:
 # -count=1 disables Go's test cache — integration tests depend on the live
 # Omni server so we always want them to actually run.
 test:
-	SPANNER_EMULATOR_HOST=$(OMNI_HOST) \
+	SPANNER_TEST_QUEUES=1 SPANNER_EMULATOR_HOST=$(OMNI_HOST) \
 	SPANNER_PROJECT_ID=$(OMNI_PROJECT) \
 	SPANNER_INSTANCE_ID=$(OMNI_INSTANCE) \
 	go test -v -count=1 -timeout 15m -parallel $(TEST_PARALLEL) ./...
 
 omni-up:
 	docker run -d -p 15000:15000 --name $(OMNI_CONTAINER) \
-		-v $(OMNI_VOLUME):/spanner $(OMNI_IMAGE) start-single-server
+		-v $(OMNI_VOLUME):/spanner $(OMNI_IMAGE) start-single-server --listen-addresses=0.0.0.0
 	@echo "Waiting for Spanner Omni to be ready..."
 	@for i in $$(seq 1 90); do \
 		if docker logs $(OMNI_CONTAINER) 2>&1 | grep -q "Spanner is ready"; then exit 0; fi; \
