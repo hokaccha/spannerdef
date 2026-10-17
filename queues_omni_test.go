@@ -11,6 +11,7 @@ func TestOmniQueues(t *testing.T) {
 	if os.Getenv("SPANNER_TEST_QUEUES") != "1" {
 		t.Skip("set SPANNER_TEST_QUEUES=1 with a Queue-capable backend")
 	}
+	t.Parallel()
 	db := recreateDatabase(t, getTestConfig(t))
 	base := `CREATE TABLE P (Id TIMESTAMP NOT NULL) PRIMARY KEY(Id);
  CREATE QUEUE Q (Id TIMESTAMP NOT NULL, N INT64 NOT NULL, Payload JSON NOT NULL) PRIMARY KEY(Id,N), INTERLEAVE IN PARENT P ON DELETE CASCADE`
@@ -31,6 +32,7 @@ func TestOmniQueueInterleaveChanges(t *testing.T) {
 	if os.Getenv("SPANNER_TEST_QUEUES") != "1" {
 		t.Skip("set SPANNER_TEST_QUEUES=1 with a Queue-capable backend")
 	}
+	t.Parallel()
 	db := recreateDatabase(t, getTestConfig(t))
 	parent := `CREATE TABLE P (Id TIMESTAMP NOT NULL) PRIMARY KEY(Id)`
 	queue := `CREATE QUEUE Q (Id TIMESTAMP NOT NULL, N INT64 NOT NULL, Payload JSON NOT NULL) PRIMARY KEY(Id,N), INTERLEAVE IN `
@@ -52,6 +54,7 @@ func TestOmniQueueDefinitions(t *testing.T) {
 	if os.Getenv("SPANNER_TEST_QUEUES") != "1" {
 		t.Skip("set SPANNER_TEST_QUEUES=1 with a Queue-capable backend")
 	}
+	t.Parallel()
 	for _, ddl := range []string{
 		`CREATE QUEUE Q (Id INT64 NOT NULL, Payload BYTES(MAX) NOT NULL HIDDEN) PRIMARY KEY(Id DESC), OPTIONS(receive_mode='PULL',disable_send=false,disable_delivery=false)`,
 		`CREATE QUEUE Q (Id INT64 NOT NULL AS (CAST(JSON_VALUE(Payload, '$.id') AS INT64)) STORED, Payload JSON NOT NULL) PRIMARY KEY(Id)`,
