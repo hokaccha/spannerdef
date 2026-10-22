@@ -6,11 +6,11 @@ require (
 	cloud.google.com/go/auth v0.24.1
 	cloud.google.com/go/longrunning v1.3.0
 	cloud.google.com/go/spanner v1.96.1
-	github.com/cloudspannerecosystem/memefish v0.8.2-0.20260927033833-16b17ddb4ed7
+	github.com/cloudspannerecosystem/memefish v0.9.0
 	github.com/googleapis/gax-go/v2 v2.26.2
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/stretchr/testify v1.12.1
-	google.golang.org/api v0.303.0
+	google.golang.org/api v0.304.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
